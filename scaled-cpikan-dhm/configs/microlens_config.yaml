@@ -1,0 +1,50 @@
+# 데이터 소스 설정
+data:
+  mode: 'synthetic'  # 'synthetic' 또는 'real'로 설정하여 모드 전환
+
+  # 실제 데이터 설정
+  real:
+    path: './data/interferograms/'
+
+  # 가상 데이터(시뮬레이션) 설정
+  synthetic:
+    # 생성된 데이터 저장 경로 (선택 사항)
+    save_path: './data/synthetic/'
+
+    # 팬텀 및 광학계 파라미터 (Source 420 참고)
+    phantom_type: 'microlens_array'
+    optics:
+      wavelength_nm: 632.8
+      refractive_index_lens: 1.5
+      refractive_index_medium: 1.0
+    geometry:
+      lens_pitch_um: 200
+      focal_length_um: 1010
+    # ... 기타 팬텀 파라미터
+
+      # 노이즈 모델 설정 (Source 425 참고)
+      noise:
+        add_noise: true
+        shot_noise_level: 0.01
+        readout_noise_std: 0.005
+        pzt_error_std: 0.02 # 라디안 단위
+
+  # 처리된 데이터 저장 경로
+  processed_data_path: './data/processed/'
+
+# 모델 하이퍼파라미터
+model:
+  layers: [2, 128, 128, 2] # [input, hidden1, hidden2, output]
+  degree: 4
+  domain:
+    # 입력 좌표(x, y)의 물리적 범위
+    min: [0, 0]
+    max: [511, 511]
+
+
+# 훈련 설정
+training:
+  learning_rate: 0.001
+  epochs: 10
+  # 모델 가중치를 저장할 경로
+  checkpoint_path: './checkpoints/'

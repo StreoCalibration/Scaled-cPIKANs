@@ -1,0 +1,20 @@
+data:
+  mode: real
+  real:
+    path: ./data/interferograms/
+  synthetic:
+    geometry:
+      focal_length_um: 1010
+      lens_pitch_um: 200
+    noise:
+      add_noise: true
+      pzt_error_std: 0.02
+      readout_noise_std: 0.005
+      shot_noise_level: 0.01
+    optics:
+      refractive_index_lens: 1.5
+      refractive_index_medium: 1.0
+      wavelength_nm: 632.8
+    phantom_type: microlens_array
+    save_path: ./data/synthetic/
+model: null
