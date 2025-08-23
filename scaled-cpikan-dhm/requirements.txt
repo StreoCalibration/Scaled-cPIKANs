@@ -1,7 +1,0 @@
-# Basic requirements
-numpy
-torch
-pyyaml
-
-# For visualization
-matplotlib
