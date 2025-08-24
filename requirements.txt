@@ -2,3 +2,4 @@ torch
 numpy
 scikit-image
 matplotlib
+scipy

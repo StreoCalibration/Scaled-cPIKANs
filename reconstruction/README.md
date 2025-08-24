@@ -23,10 +23,11 @@ The simulation requires the following Python libraries:
 - `numpy`
 - `scikit-image`
 - `matplotlib` (optional, but good to have)
+- `scipy`
 
 You can install them using pip:
 ```bash
-pip install numpy scikit-image matplotlib
+pip install numpy scikit-image matplotlib scipy
 ```
 
 ### Execution
