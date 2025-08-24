@@ -14,11 +14,13 @@ The physics-informed loss function enforces two main constraints:
     enforced by penalizing the Laplacian of the height map.
 """
 
-import torch
-import numpy as np
-import matplotlib.pyplot as plt
+import argparse
 import os
 import sys
+
+import matplotlib.pyplot as plt
+import numpy as np
+import torch
 
 # Add the project root to the Python path
 project_root = os.path.abspath(os.path.join(os.path.dirname(__file__), '..'))
@@ -27,12 +29,44 @@ if project_root not in sys.path:
 
 from collections import defaultdict
 from src.models import Scaled_cPIKAN
-from reconstruction.data_generator import generate_synthetic_data, Wavelengths
+from reconstruction.data_generator import (
+    DEFAULT_WAVELENGTHS,
+    generate_synthetic_data,
+)
 
 def main():
-    """
-    Main function to set up and run the 3D reconstruction from buckets experiment.
-    """
+    """Main function to set up and run the 3D reconstruction from buckets experiment."""
+
+    parser = argparse.ArgumentParser(
+        description="3D reconstruction from bucket images using Scaled-cPIKAN"
+    )
+    parser.add_argument(
+        "--num-lasers",
+        type=int,
+        default=None,
+        help="Number of lasers. Defaults to len(wavelengths).",
+    )
+    parser.add_argument(
+        "--num-buckets",
+        type=int,
+        default=3,
+        help="Number of bucket images per laser.",
+    )
+    parser.add_argument(
+        "--wavelengths",
+        type=float,
+        nargs="+",
+        default=DEFAULT_WAVELENGTHS,
+        help="Wavelength for each laser.",
+    )
+    args = parser.parse_args()
+    if args.num_lasers is None:
+        args.num_lasers = len(args.wavelengths)
+    elif args.num_lasers != len(args.wavelengths):
+        raise ValueError(
+            "num_lasers must match the number of provided wavelengths"
+        )
+
     print("--- Starting 3D Reconstruction from Buckets with Scaled-cPIKAN PINN ---")
 
     # 1. --- Configuration ---
@@ -47,7 +81,9 @@ def main():
     print("\nStep 1: Generating synthetic data...")
     ground_truth_height, _, bucket_images = generate_synthetic_data(
         shape=grid_shape,
-        save_path=None  # Don't save files for this script
+        wavelengths=args.wavelengths,
+        num_buckets=args.num_buckets,
+        save_path=None,  # Don't save files for this script
     )
 
     # Convert numpy arrays to torch tensors
@@ -158,15 +194,15 @@ def main():
 
     # Reshape targets (bucket images) to match flattened coordinates
     # Shape: [num_lasers, num_buckets, H, W] -> [num_lasers, num_buckets, H*W]
-    num_lasers = bucket_images_t.shape[0]
-    num_buckets = bucket_images_t.shape[1]
+    num_lasers = args.num_lasers
+    num_buckets = args.num_buckets
 
     targets = bucket_images_t.view(num_lasers, num_buckets, -1)
 
     # Instantiate the loss function
     loss_fn = ReconstructionLossFromBuckets(
-        wavelengths=Wavelengths,
-        smoothness_weight=1e-7 # NOTE: This weight may need significant tuning
+        wavelengths=args.wavelengths,
+        smoothness_weight=1e-7,  # NOTE: This weight may need significant tuning
     )
 
     # --- Adam Optimization ---

@@ -6,8 +6,6 @@ import os
 # Users can supply their own list to change the number of lasers.
 DEFAULT_WAVELENGTHS = [5.0, 5.5, 6.05, 6.655]
 
-# Backward compatibility alias
-Wavelengths = DEFAULT_WAVELENGTHS
 
 
 def generate_synthetic_data(
