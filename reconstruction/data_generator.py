@@ -13,7 +13,7 @@ def generate_synthetic_data(shape=(128, 128), save_path="reconstruction_data"):
 
     This function creates a ground truth height map and then simulates the
     3-bucket measurement process for each of the 4 lasers to produce
-    wrapped phase maps.
+    both the raw bucket images and the final wrapped phase maps.
 
     Args:
         shape (tuple[int, int]): The (height, width) of the data grids to generate.
@@ -21,9 +21,11 @@ def generate_synthetic_data(shape=(128, 128), save_path="reconstruction_data"):
                                 If None, data is not saved to disk.
 
     Returns:
-        tuple[np.ndarray, list[np.ndarray]]: A tuple containing:
+        tuple[np.ndarray, list[np.ndarray], np.ndarray]: A tuple containing:
             - ground_truth_height (np.ndarray): The 2D ground truth height map.
             - wrapped_phases (list[np.ndarray]): A list of 4 wrapped phase maps.
+            - bucket_images (np.ndarray): An array of shape (4, 3, H, W) containing
+                                          the 3 bucket images for each of the 4 lasers.
     """
     print("--- Starting Synthetic Data Generation ---")
     height, width = shape
@@ -39,6 +41,7 @@ def generate_synthetic_data(shape=(128, 128), save_path="reconstruction_data"):
     print(f"Generated ground truth height map of size {shape}.")
 
     # --- Simulation of Phase-Shift Imaging for each laser ---
+    all_bucket_images = []
     wrapped_phases = []
     for i, wavelength in enumerate(Wavelengths):
         # Phase is proportional to height and inversely proportional to wavelength
@@ -55,12 +58,19 @@ def generate_synthetic_data(shape=(128, 128), save_path="reconstruction_data"):
         I1 = A + B * np.cos(phase + delta_1)
         I2 = A + B * np.cos(phase + delta_2)
 
+        # Store the bucket images for this laser
+        laser_buckets = np.stack([I0, I1, I2], axis=0)
+        all_bucket_images.append(laser_buckets)
+
         # Calculate wrapped phase from the three bucket images
         numerator = np.sqrt(3) * (I2 - I1)
         denominator = 2 * I0 - I1 - I2
         wrapped_phase = np.arctan2(numerator, denominator)
         wrapped_phases.append(wrapped_phase)
-        print(f"Generated wrapped phase for Laser {i+1} (Wavelength: {wavelength} um)...")
+        print(f"Generated bucket images and wrapped phase for Laser {i+1} (Wavelength: {wavelength} um)...")
+
+    # Convert list of bucket images to a single numpy array
+    bucket_images_np = np.stack(all_bucket_images, axis=0) # Shape: (4, 3, H, W)
 
     # --- Save data if a path is provided ---
     if save_path:
@@ -70,14 +80,21 @@ def generate_synthetic_data(shape=(128, 128), save_path="reconstruction_data"):
         gt_path = os.path.join(save_path, "ground_truth_height.npy")
         np.save(gt_path, ground_truth_height)
         print(f"Saved ground truth height to {gt_path}")
+
         # Save phase maps
         for i, wrapped_phase in enumerate(wrapped_phases):
             phase_path = os.path.join(save_path, f"wrapped_phase_laser_{i+1}.npy")
             np.save(phase_path, wrapped_phase)
             print(f"Saved wrapped phase for laser {i+1} to {phase_path}")
 
+        # Save bucket images
+        buckets_path = os.path.join(save_path, "bucket_images.npy")
+        np.save(buckets_path, bucket_images_np)
+        print(f"Saved all bucket images to {buckets_path}")
+
+
     print("\n--- Synthetic Data Generation Complete ---")
-    return ground_truth_height, wrapped_phases
+    return ground_truth_height, wrapped_phases, bucket_images_np
 
 
 if __name__ == "__main__":
