@@ -66,6 +66,32 @@
     ```
     *참고: 이 스크립트는 계산량이 많으며, 특히 CPU에서 실행할 경우 완료하는 데 상당한 시간이 걸릴 수 있습니다 (10-20분 이상).*
 
+### 2.3. 버킷 기반 3D 복원 워크플로우
+
+이 워크플로우는 레이저 버킷 이미지를 직접 사용하여 Scaled-cPIKAN PINN으로 3D 표면을 복원하는 방법을 설명합니다. 전체 과정은 데이터 생성 → 학습 → 추론의 세 단계로 구성됩니다.
+
+1.  **데이터 생성**
+    ```bash
+    python -m reconstruction.data_generator --num-lasers 4 --num-buckets 3 --wavelengths 5.0 5.5 6.05 6.655
+    ```
+    - `--num-lasers`: 시뮬레이션할 레이저 파장의 수
+    - `--num-buckets`: 각 레이저에서 측정하는 버킷 이미지 개수
+    - `--wavelengths`: 쉼표로 구분된 파장 목록(µm)
+    실행 후 `reconstruction_data/` 폴더에 `ground_truth_height.npy`, `wrapped_phase_laser_1.npy` 등 여러 `.npy` 파일이 생성됩니다.
+
+2.  **학습**
+    ```bash
+    python examples/solve_reconstruction_from_buckets.py --num-lasers 4 --num-buckets 3 --wavelengths 5.0 5.5 6.05 6.655
+    ```
+    버킷 이미지를 이용해 PINN을 학습하며, 결과 모델 가중치와 손실 이력은 `reconstruction_from_buckets_results/`에 저장됩니다.
+
+    
+3.  **추론**
+    ```bash
+    python -m reconstruction.main --num-lasers 4 --num-buckets 3 --wavelengths 5.0 5.5 6.05 6.655
+    ```
+    학습된 모델을 사용해 높이 맵을 복원하고, 최종 결과는 `reconstruction_data/reconstructed_height.npy`로 저장됩니다.
+
 ## 3. 예상 출력
 
 ### 3.1. 헬름홀츠 예제 출력
