@@ -3,7 +3,7 @@ Example: 3D Height Reconstruction from Bucket Images using a Scaled-cPIKAN PINN.
 
 This script demonstrates how to solve a physics-informed inverse problem
 using the Scaled-cPIKAN model. The goal is to reconstruct a 3D height map, h(x, y),
-from a set of raw "bucket" intensity images from four different laser wavelengths.
+from a set of raw "bucket" intensity images from multiple laser wavelengths.
 
 This approach is more direct than using pre-calculated wrapped phase maps.
 
@@ -14,6 +14,7 @@ The physics-informed loss function enforces two main constraints:
     enforced by penalizing the Laplacian of the height map.
 """
 
+import argparse
 import torch
 import numpy as np
 import matplotlib.pyplot as plt
@@ -27,12 +28,14 @@ if project_root not in sys.path:
 
 from collections import defaultdict
 from src.models import Scaled_cPIKAN
-from reconstruction.data_generator import generate_synthetic_data, Wavelengths
+from reconstruction.data_generator import (
+    DEFAULT_WAVELENGTHS,
+    generate_synthetic_data,
+)
 
-def main():
-    """
-    Main function to set up and run the 3D reconstruction from buckets experiment.
-    """
+
+def main(args):
+    """Main function to set up and run the 3D reconstruction from buckets experiment."""
     print("--- Starting 3D Reconstruction from Buckets with Scaled-cPIKAN PINN ---")
 
     # 1. --- Configuration ---
@@ -47,7 +50,9 @@ def main():
     print("\nStep 1: Generating synthetic data...")
     ground_truth_height, _, bucket_images = generate_synthetic_data(
         shape=grid_shape,
-        save_path=None  # Don't save files for this script
+        wavelengths=args.wavelengths,
+        num_buckets=args.num_buckets,
+        save_path=None,  # Don't save files for this script
     )
 
     # Convert numpy arrays to torch tensors
@@ -55,38 +60,33 @@ def main():
     bucket_images_t = torch.from_numpy(bucket_images).float().to(device)
 
     # Plot and save the ground truth and a sample of bucket images
-    fig, axs = plt.subplots(2, 3, figsize=(18, 10))
+    fig, axs = plt.subplots(1, args.num_lasers + 1, figsize=(5 * (args.num_lasers + 1), 5))
     fig.suptitle("Input Data for Bucket-Based PINN Training", fontsize=16)
 
-    im = axs[0, 0].imshow(ground_truth_height, cmap='viridis')
-    axs[0, 0].set_title("Ground Truth Height")
-    fig.colorbar(im, ax=axs[0, 0])
+    im = axs[0].imshow(ground_truth_height, cmap="viridis")
+    axs[0].set_title("Ground Truth Height")
+    fig.colorbar(im, ax=axs[0])
 
-    # Show the 3 buckets for the first laser
-    for i in range(3):
-        im = axs[0, i+1 if i < 2 else 2].imshow(bucket_images[0, i], cmap='gray')
-        axs[0, i+1 if i < 2 else 2].set_title(f"Laser 1, Bucket {i+1}")
-        fig.colorbar(im, ax=axs[0, i+1 if i < 2 else 2])
-
-    # Show one bucket image for each of the other lasers
-    for i in range(1, 4):
-        im = axs[1, i-1].imshow(bucket_images[i, 0], cmap='gray')
-        axs[1, i-1].set_title(f"Laser {i+1}, Bucket 1")
-        fig.colorbar(im, ax=axs[1, i-1])
-
+    for i in range(args.num_lasers):
+        im = axs[i + 1].imshow(bucket_images[i, 0], cmap="gray")
+        axs[i + 1].set_title(f"Laser {i + 1}, Bucket 1")
+        fig.colorbar(im, ax=axs[i + 1])
 
     plt.tight_layout(rect=[0, 0.03, 1, 0.95])
     plt.savefig(os.path.join(output_dir, "01_input_bucket_data.png"))
-    print(f"Saved input data visualization to '{os.path.join(output_dir, '01_input_bucket_data.png')}'")
-
+    print(
+        f"Saved input data visualization to '{os.path.join(output_dir, '01_input_bucket_data.png')}'"
+    )
 
     # 3. --- Define the Physics-Informed Loss Function ---
     class ReconstructionLossFromBuckets(torch.nn.Module):
-        def __init__(self, wavelengths, smoothness_weight=1e-4):
+        def __init__(self, wavelengths, num_buckets, smoothness_weight=1e-4):
             super().__init__()
             self.wavelengths = torch.tensor(wavelengths, dtype=torch.float32).view(-1, 1, 1, 1)
-            # Phase shifts for the 3 buckets
-            self.deltas = torch.tensor([0, 2 * np.pi / 3, 4 * np.pi / 3], dtype=torch.float32).view(1, 3, 1, 1)
+            deltas = torch.arange(num_buckets, dtype=torch.float32)
+            self.deltas = (
+                deltas.view(1, num_buckets, 1, 1) * (2 * np.pi / num_buckets)
+            )
             self.smoothness_weight = smoothness_weight
             self.mse_loss = torch.nn.MSELoss()
             self.metrics = {}
@@ -103,7 +103,7 @@ def main():
             # Predicted phase: shape [1, 1, H*W] -> [N_lasers, 1, H*W]
             predicted_phase = (4 * np.pi / self.wavelengths) * predicted_height
 
-            # Add phase shifts for buckets: [N_lasers, 1, H*W] -> [N_lasers, N_buckets, H*W]
+            # Add phase shifts for buckets
             phase_with_shifts = predicted_phase.unsqueeze(1) + self.deltas
 
             # Simulate bucket images
@@ -111,6 +111,9 @@ def main():
             A = 128
             B = 100
             predicted_buckets = A + B * torch.cos(phase_with_shifts)
+            predicted_buckets = predicted_buckets.view(
+                self.wavelengths.shape[0], -1, predicted_height.shape[-1]
+            )
 
             # targets are the bucket_images_t, shape [N_lasers, N_buckets, H*W]
             loss_data = self.mse_loss(predicted_buckets, targets)
@@ -158,13 +161,14 @@ def main():
     coords.requires_grad_(True)
 
     # Reshape targets (bucket images) to match flattened coordinates
-    # Shape: [4, 3, H, W] -> [4, 3, H*W]
-    targets = bucket_images_t.view(4, 3, -1)
+    # Shape: [num_lasers, num_buckets, H, W] -> [num_lasers, num_buckets, H*W]
+    targets = bucket_images_t.view(args.num_lasers, args.num_buckets, -1)
 
     # Instantiate the loss function
     loss_fn = ReconstructionLossFromBuckets(
-        wavelengths=Wavelengths,
-        smoothness_weight=1e-7 # NOTE: This weight may need significant tuning
+        wavelengths=args.wavelengths,
+        num_buckets=args.num_buckets,
+        smoothness_weight=1e-7,  # NOTE: This weight may need significant tuning
     )
 
     # --- Adam Optimization ---
@@ -266,4 +270,31 @@ def main():
     print("\n--- 3D Reconstruction from Buckets Complete ---")
 
 if __name__ == "__main__":
-    main()
+    parser = argparse.ArgumentParser(
+        description="3D Height Reconstruction from Bucket Images using Scaled-cPIKAN"
+    )
+    parser.add_argument(
+        "--num-lasers",
+        type=int,
+        default=None,
+        help="Number of laser wavelengths to use",
+    )
+    parser.add_argument(
+        "--num-buckets",
+        type=int,
+        default=3,
+        help="Number of phase-shifted bucket images per laser",
+    )
+    parser.add_argument(
+        "--wavelengths",
+        type=float,
+        nargs="+",
+        default=DEFAULT_WAVELENGTHS,
+        help="List of laser wavelengths (in micrometers)",
+    )
+    args = parser.parse_args()
+    if args.num_lasers is None:
+        args.num_lasers = len(args.wavelengths)
+    elif len(args.wavelengths) != args.num_lasers:
+        raise ValueError("--num-lasers must match the number of provided --wavelengths")
+    main(args)
