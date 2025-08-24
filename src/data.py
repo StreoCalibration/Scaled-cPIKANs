@@ -3,56 +3,54 @@ from scipy.stats import qmc
 
 def affine_scale(x: torch.Tensor, domain_min: torch.Tensor, domain_max: torch.Tensor) -> torch.Tensor:
     """
-    Scales a tensor from a physical domain [domain_min, domain_max] to the
-    canonical domain [-1, 1].
+    텐서를 물리적 도메인 [domain_min, domain_max]에서 표준 도메인 [-1, 1]으로 스케일링합니다.
 
     Args:
-        x (torch.Tensor): The input tensor in the physical domain.
-        domain_min (torch.Tensor): The minimum values of the physical domain.
-        domain_max (torch.Tensor): The maximum values of the physical domain.
+        x (torch.Tensor): 물리적 도메인에 있는 입력 텐서.
+        domain_min (torch.Tensor): 물리적 도메인의 최솟값.
+        domain_max (torch.Tensor): 물리적 도메인의 최댓값.
 
     Returns:
-        torch.Tensor: The scaled tensor in the [-1, 1] domain.
+        torch.Tensor: [-1, 1] 도메인으로 스케일링된 텐서.
     """
     return 2.0 * (x - domain_min) / (domain_max - domain_min) - 1.0
 
 def affine_unscale(x_scaled: torch.Tensor, domain_min: torch.Tensor, domain_max: torch.Tensor) -> torch.Tensor:
     """
-    Unscales a tensor from the canonical domain [-1, 1] back to the
-    physical domain [domain_min, domain_max].
+    텐서를 표준 도메인 [-1, 1]에서 다시 물리적 도메인 [domain_min, domain_max]으로 역스케일링합니다.
 
     Args:
-        x_scaled (torch.Tensor): The input tensor in the [-1, 1] domain.
-        domain_min (torch.Tensor): The minimum values of the physical domain.
-        domain_max (torch.Tensor): The maximum values of the physical domain.
+        x_scaled (torch.Tensor): [-1, 1] 도메인에 있는 입력 텐서.
+        domain_min (torch.Tensor): 물리적 도메인의 최솟값.
+        domain_max (torch.Tensor): 물리적 도메인의 최댓값.
 
     Returns:
-        torch.Tensor: The unscaled tensor in the physical domain.
+        torch.Tensor: 물리적 도메인으로 역스케일링된 텐서.
     """
     return (x_scaled + 1.0) / 2.0 * (domain_max - domain_min) + domain_min
 
 
 class LatinHypercubeSampler:
     """
-    A sampler that generates points using Latin Hypercube Sampling (LHS).
+    라틴 하이퍼큐브 샘플링(LHS)을 사용하여 포인트를 생성하는 샘플러.
 
-    LHS is a stratified sampling technique that ensures a more uniform spread
-    of sample points across the domain compared to pure random sampling.
+    LHS는 순수 무작위 샘플링에 비해 도메인 전체에 걸쳐 샘플 포인트가
+    더 균일하게 분포되도록 보장하는 계층화된 샘플링 기법입니다.
 
     Args:
-        n_points (int): The number of sample points to generate.
-        domain_min (list[float] or torch.Tensor): The lower bounds of the sampling domain for each dimension.
-        domain_max (list[float] or torch.Tensor): The upper bounds of the sampling domain for each dimension.
-        dtype (torch.dtype, optional): The desired data type of the output tensor. Defaults to torch.float32.
-        device (torch.device, optional): The desired device of the output tensor. Defaults to 'cpu'.
+        n_points (int): 생성할 샘플 포인트의 수.
+        domain_min (list[float] or torch.Tensor): 각 차원에 대한 샘플링 도메인의 하한.
+        domain_max (list[float] or torch.Tensor): 각 차원에 대한 샘플링 도메인의 상한.
+        dtype (torch.dtype, optional): 출력 텐서의 원하는 데이터 타입. 기본값은 torch.float32.
+        device (torch.device, optional): 출력 텐서의 원하는 장치. 기본값은 'cpu'.
     """
     def __init__(self, n_points: int, domain_min: list[float], domain_max: list[float], dtype: torch.dtype = torch.float32, device: torch.device = 'cpu'):
         if len(domain_min) != len(domain_max):
-            raise ValueError("domain_min and domain_max must have the same length.")
+            raise ValueError("domain_min과 domain_max는 같은 길이를 가져야 합니다.")
 
         self.n_points = n_points
         self.dimensions = len(domain_min)
-        self.sampler = qmc.LatinHypercube(d=self.dimensions, seed=None) # Use a random seed each time
+        self.sampler = qmc.LatinHypercube(d=self.dimensions, seed=None) # 매번 무작위 시드 사용
 
         self.domain_min = torch.tensor(domain_min, dtype=dtype, device=device)
         self.domain_max = torch.tensor(domain_max, dtype=dtype, device=device)
@@ -61,16 +59,16 @@ class LatinHypercubeSampler:
 
     def sample(self) -> torch.Tensor:
         """
-        Generates the sample points.
+        샘플 포인트를 생성합니다.
 
         Returns:
-            torch.Tensor: A tensor of shape (n_points, dimensions) containing the sampled points.
+            torch.Tensor: 샘플링된 포인트를 포함하는 (n_points, dimensions) 크기의 텐서.
         """
-        # Sample points in the unit hypercube [0, 1]^d
+        # 단위 하이퍼큐브 [0, 1]^d에서 포인트 샘플링
         unit_samples = self.sampler.random(n=self.n_points)
         unit_samples_tensor = torch.tensor(unit_samples, dtype=self.dtype, device=self.device)
 
-        # Scale the samples to the physical domain
+        # 샘플을 물리적 도메인으로 스케일링
         samples = self.domain_min + (self.domain_max - self.domain_min) * unit_samples_tensor
 
         return samples

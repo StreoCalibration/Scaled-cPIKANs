@@ -3,16 +3,16 @@ import torch.nn as nn
 
 class ChebyKANLayer(nn.Module):
     """
-    A Chebyshev-based Kolmogorov-Arnold Network (KAN) layer.
+    체비쇼프 기반 콜모고로프-아르놀트 신경망(KAN) 레이어.
 
-    This layer uses learnable activation functions on the edges, parameterized by
-    Chebyshev polynomials, instead of fixed activation functions on the nodes.
+    이 레이어는 노드의 고정된 활성화 함수 대신, 체비쇼프 다항식으로
+    매개변수화된 학습 가능한 활성화 함수를 엣지(연결선)에 사용합니다.
 
     Args:
-        in_features (int): Number of input features.
-        out_features (int): Number of output features.
-        cheby_order (int): The order (degree) K of the Chebyshev polynomials to use.
-                           The basis will have K+1 polynomials (T_0 to T_K).
+        in_features (int): 입력 특징의 수.
+        out_features (int): 출력 특징의 수.
+        cheby_order (int): 사용할 체비쇼프 다항식의 차수(degree) K.
+                           기저는 K+1개의 다항식(T_0부터 T_K)을 가집니다.
     """
     def __init__(self, in_features: int, out_features: int, cheby_order: int):
         super().__init__()
@@ -20,48 +20,48 @@ class ChebyKANLayer(nn.Module):
         self.out_features = out_features
         self.cheby_order = cheby_order
 
-        # Learnable coefficients for the Chebyshev polynomials.
-        # Shape: (out_features, in_features, cheby_order + 1)
+        # 체비쇼프 다항식을 위한 학습 가능한 계수.
+        # 크기: (out_features, in_features, cheby_order + 1)
         self.cheby_coeffs = nn.Parameter(torch.empty(out_features, in_features, cheby_order + 1))
-        # Initialize weights using a standard method, e.g., Kaiming uniform.
+        # 표준 방법(예: Kaiming uniform)을 사용하여 가중치 초기화.
         nn.init.kaiming_uniform_(self.cheby_coeffs, a=0.1)
 
     def forward(self, x: torch.Tensor) -> torch.Tensor:
         """
-        Forward pass of the ChebyKANLayer.
+        ChebyKANLayer의 순방향 패스.
 
         Args:
-            x (torch.Tensor): Input tensor of shape (batch_size, in_features).
-                              The input values must be in the range [-1, 1].
+            x (torch.Tensor): (batch_size, in_features) 크기의 입력 텐서.
+                              입력값은 반드시 [-1, 1] 범위 내에 있어야 합니다.
 
         Returns:
-            torch.Tensor: Output tensor of shape (batch_size, out_features).
+            torch.Tensor: (batch_size, out_features) 크기의 출력 텐서.
         """
         batch_size, in_features = x.shape
         if in_features != self.in_features:
-            raise ValueError(f"Input feature dimension {in_features} does not match layer's in_features {self.in_features}")
+            raise ValueError(f"입력 특징 차원 {in_features}이 레이어의 in_features {self.in_features}와 일치하지 않습니다.")
 
-        # Create the Chebyshev polynomial basis T_k(x) for k=0...K by building a list
-        # of polynomials and then stacking them. This avoids inplace operations.
+        # k=0...K에 대한 체비쇼프 다항식 기저 T_k(x)를 다항식 리스트를 만들어 쌓는 방식으로 생성.
+        # 이는 인플레이스(inplace) 연산을 방지합니다.
         cheby_polys = []
         cheby_polys.append(torch.ones_like(x))  # T_0(x) = 1
         if self.cheby_order > 0:
             cheby_polys.append(x)  # T_1(x) = x
 
-        # Recurrence relation: T_{k+1}(x) = 2x * T_k(x) - T_{k-1}(x)
+        # 점화식: T_{k+1}(x) = 2x * T_k(x) - T_{k-1}(x)
         for k in range(1, self.cheby_order):
             next_poly = 2 * x * cheby_polys[-1] - cheby_polys[-2]
             cheby_polys.append(next_poly)
 
-        # Stack the polynomials to form the basis matrix.
-        # Shape: (batch_size, in_features, cheby_order + 1)
+        # 다항식들을 쌓아 기저 행렬을 형성.
+        # 크기: (batch_size, in_features, cheby_order + 1)
         cheby_basis = torch.stack(cheby_polys, dim=-1)
 
-        # Compute the output by contracting the basis with the coefficients.
+        # 기저와 계수를 축약하여 출력을 계산.
         # phi_{j,i}(x_i) = sum_k c_{j,i,k} * T_k(x_i)
         # y_j = sum_i phi_{j,i}(x_i)
-        # This can be done efficiently with einsum.
-        # 'bik,oik->bo' means: sum over i and k for each b and o.
+        # 이는 einsum으로 효율적으로 계산할 수 있습니다.
+        # 'bik,oik->bo'는 각 b와 o에 대해 i와 k를 합산하라는 의미.
         # b: batch_size, i: in_features, k: cheby_order, o: out_features
         output = torch.einsum('bik,oik->bo', cheby_basis, self.cheby_coeffs)
 
@@ -69,30 +69,30 @@ class ChebyKANLayer(nn.Module):
 
 class Scaled_cPIKAN(nn.Module):
     """
-    A Scaled Chebyshev-based Physics-Informed Kolmogorov-Arnold Network.
+    스케일링된 체비쇼프 기반 물리 정보 콜모고로프-아르놀트 신경망.
 
-    This model implements the full Scaled-cPIKAN architecture as described in the
-    design document. It includes affine domain scaling, a sequence of ChebyKAN layers,
-    and intermediate normalization and activation functions.
+    이 모델은 설계 문서에 설명된 전체 Scaled-cPIKAN 아키텍처를 구현합니다.
+    아핀 영역 스케일링, ChebyKAN 레이어 시퀀스, 그리고 중간의 정규화 및
+    활성화 함수를 포함합니다.
 
     Args:
-        layers_dims (list[int]): A list defining the network architecture.
-                                 e.g., [2, 32, 32, 1] for a 2D input, 1D output,
-                                 and 2 hidden layers with 32 neurons each.
-        cheby_order (int): The order of Chebyshev polynomials for all layers.
-        domain_min (torch.Tensor): A tensor with the minimum values of the physical domain for each input dimension.
-        domain_max (torch.Tensor): A tensor with the maximum values of the physical domain for each input dimension.
+        layers_dims (list[int]): 신경망 아키텍처를 정의하는 리스트.
+                                 예: [2, 32, 32, 1]은 2D 입력, 1D 출력,
+                                 그리고 각각 32개의 뉴런을 가진 2개의 은닉층을 의미.
+        cheby_order (int): 모든 레이어에 대한 체비쇼프 다항식의 차수.
+        domain_min (torch.Tensor): 각 입력 차원에 대한 물리적 도메인의 최솟값을 담은 텐서.
+        domain_max (torch.Tensor): 각 입력 차원에 대한 물리적 도메인의 최댓값을 담은 텐서.
     """
     def __init__(self, layers_dims: list[int], cheby_order: int, domain_min: torch.Tensor, domain_max: torch.Tensor):
         super().__init__()
 
         if not isinstance(layers_dims, list) or len(layers_dims) < 2:
-            raise ValueError("layers_dims must be a list of at least two integers.")
+            raise ValueError("layers_dims는 최소 두 개 이상의 정수를 담은 리스트여야 합니다.")
 
         self.layers_dims = layers_dims
         self.cheby_order = cheby_order
 
-        # Register domain bounds as non-trainable buffers.
+        # 도메인 경계를 학습 불가능한 버퍼로 등록.
         self.register_buffer('domain_min', domain_min)
         self.register_buffer('domain_max', domain_max)
 
@@ -103,34 +103,34 @@ class Scaled_cPIKAN(nn.Module):
 
             self.network.append(ChebyKANLayer(in_dim, out_dim, cheby_order))
 
-            # Add LayerNorm and tanh activation for all but the last layer.
+            # 마지막 레이어를 제외한 모든 레이어에 LayerNorm과 tanh 활성화 함수 추가.
             if i < len(layers_dims) - 2:
                 self.network.append(nn.LayerNorm(out_dim))
                 self.network.append(nn.Tanh())
 
     def _affine_scale(self, x: torch.Tensor) -> torch.Tensor:
         """
-        Scales the input tensor from the physical domain [min, max] to the
-        canonical domain [-1, 1] required by Chebyshev polynomials.
+        입력 텐서를 물리적 도메인 [min, max]에서 체비쇼프 다항식이 요구하는
+        표준 도메인 [-1, 1]으로 스케일링합니다.
         """
-        # Ensure domain_min and domain_max are broadcastable to x's shape.
+        # domain_min과 domain_max가 x의 크기에 브로드캐스트 가능하도록 보장.
         return 2.0 * (x - self.domain_min) / (self.domain_max - self.domain_min) - 1.0
 
     def forward(self, x: torch.Tensor) -> torch.Tensor:
         """
-        Forward pass of the Scaled_cPIKAN model.
+        Scaled_cPIKAN 모델의 순방향 패스.
 
         Args:
-            x (torch.Tensor): Input tensor of shape (batch_size, in_features)
-                              representing points in the physical domain.
+            x (torch.Tensor): 물리적 도메인 내의 점들을 나타내는
+                              (batch_size, in_features) 크기의 입력 텐서.
 
         Returns:
-            torch.Tensor: Output tensor, typically the predicted PDE solution.
+            torch.Tensor: 출력 텐서, 일반적으로 예측된 PDE 해.
         """
-        # First, apply the essential affine domain scaling.
+        # 먼저, 필수적인 아핀 영역 스케일링을 적용.
         x_scaled = self._affine_scale(x)
 
-        # Pass the scaled input through the network sequence.
+        # 스케일링된 입력을 신경망 시퀀스에 통과.
         for layer in self.network:
             x_scaled = layer(x_scaled)
 
