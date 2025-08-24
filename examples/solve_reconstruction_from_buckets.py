@@ -84,17 +84,15 @@ def main():
     class ReconstructionLossFromBuckets(torch.nn.Module):
         def __init__(self, wavelengths, smoothness_weight=1e-4):
             super().__init__()
-            self.wavelengths = torch.tensor(wavelengths, dtype=torch.float32).view(-1, 1, 1)
+            self.register_buffer("wavelengths", torch.tensor(wavelengths, dtype=torch.float32).view(-1, 1, 1))
             # Phase shifts for the 3 buckets
-            self.deltas = torch.tensor([0, 2 * np.pi / 3, 4 * np.pi / 3], dtype=torch.float32).view(1, 3, 1)
+            self.register_buffer("deltas", torch.tensor([0, 2 * np.pi / 3, 4 * np.pi / 3], dtype=torch.float32).view(1, 3, 1))
             self.smoothness_weight = smoothness_weight
             self.mse_loss = torch.nn.MSELoss()
             self.metrics = {}
 
         def forward(self, model_outputs, coords, targets):
             predicted_height = model_outputs
-            self.wavelengths = self.wavelengths.to(predicted_height.device)
-            self.deltas = self.deltas.to(predicted_height.device)
 
             # --- 1. Data Fidelity Loss ---
             # Enforce that the predicted height, when used to form bucket images,
