@@ -33,7 +33,7 @@ from collections import defaultdict
 from src.models import Scaled_cPIKAN
 # from src.train import Trainer # Not using the generic trainer for this problem
 # from src.loss import PhysicsInformedLoss # Not using the generic loss for this problem
-from reconstruction.data_generator import generate_synthetic_data, Wavelengths
+from reconstruction.data_generator import DEFAULT_WAVELENGTHS, generate_synthetic_data
 
 def main():
     """
@@ -49,13 +49,15 @@ def main():
     grid_shape = (128, 128)
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
     print(f"Using device: {device}")
+    wavelengths = DEFAULT_WAVELENGTHS
 
     # 2. --- Data Generation ---
     # Generate synthetic data for the problem
     print("\nStep 1: Generating synthetic data...")
     ground_truth_height, wrapped_phases = generate_synthetic_data(
         shape=grid_shape,
-        save_path=None  # Don't save individual files for this script
+        wavelengths=wavelengths,
+        save_path=None,  # Don't save individual files for this script
     )
 
     # Convert numpy arrays to torch tensors
@@ -73,7 +75,9 @@ def main():
     for i in range(4):
         row, col = (i + 1) // 3, (i + 1) % 3
         im = axs[row, col].imshow(wrapped_phases[i], cmap='twilight_shifted')
-        axs[row, col].set_title(f"Wrapped Phase (Laser {i+1}, $\lambda={Wavelengths[i]:.2f}$ um)")
+        axs[row, col].set_title(
+            f"Wrapped Phase (Laser {i+1}, $\lambda={wavelengths[i]:.2f}$ um)"
+        )
         fig.colorbar(im, ax=axs[row, col])
 
     # Hide the last subplot as it's empty
@@ -183,8 +187,8 @@ def main():
 
     # Instantiate the loss function
     loss_fn = ReconstructionLoss(
-        wavelengths=Wavelengths,
-        smoothness_weight=1e-5 # This is a key hyperparameter to tune
+        wavelengths=wavelengths,
+        smoothness_weight=1e-5,  # This is a key hyperparameter to tune
     )
 
     # 5. --- Training ---
@@ -205,8 +209,8 @@ def main():
 
     # Instantiate the loss function
     loss_fn = ReconstructionLoss(
-        wavelengths=Wavelengths,
-        smoothness_weight=1e-5 # This is a key hyperparameter to tune
+        wavelengths=wavelengths,
+        smoothness_weight=1e-5,  # This is a key hyperparameter to tune
     )
 
     # --- Adam Optimization ---
