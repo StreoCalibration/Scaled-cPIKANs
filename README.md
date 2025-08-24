@@ -33,7 +33,7 @@
 -   `README.md`: 현재 읽고 있는 파일입니다! 프로젝트의 개요를 설명합니다.
 -   `doc/`: 상세 문서가 포함된 디렉토리입니다.
     -   `Technical Design Document...`: 알고리즘과 구현 설계에 대한 심층 설명서입니다.
-    -   `manual.md`: (생성 예정) 프로젝트 설정 및 실행 방법을 안내하는 사용자 매뉴얼입니다.
+    -   `manual.md`: 프로젝트 설정 및 실행 방법을 안내하는 사용자 매뉴얼입니다.
 -   `src/`: Scaled-cPIKAN 모델과 트레이너의 핵심 소스 코드입니다.
     -   `models.py`: `ChebyKANLayer`와 메인 `Scaled_cPIKAN` 네트워크 아키텍처를 정의합니다.
     -   `loss.py`: 일반적인 `PhysicsInformedLoss` 클래스를 포함합니다.
