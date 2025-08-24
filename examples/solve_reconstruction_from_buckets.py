@@ -84,17 +84,15 @@ def main():
     class ReconstructionLossFromBuckets(torch.nn.Module):
         def __init__(self, wavelengths, smoothness_weight=1e-4):
             super().__init__()
-            self.wavelengths = torch.tensor(wavelengths, dtype=torch.float32).view(-1, 1, 1, 1)
+            self.register_buffer("wavelengths", torch.tensor(wavelengths, dtype=torch.float32).view(-1, 1, 1))
             # Phase shifts for the 3 buckets
-            self.deltas = torch.tensor([0, 2 * np.pi / 3, 4 * np.pi / 3], dtype=torch.float32).view(1, 3, 1, 1)
+            self.register_buffer("deltas", torch.tensor([0, 2 * np.pi / 3, 4 * np.pi / 3], dtype=torch.float32).view(1, 3, 1))
             self.smoothness_weight = smoothness_weight
             self.mse_loss = torch.nn.MSELoss()
             self.metrics = {}
 
         def forward(self, model_outputs, coords, targets):
             predicted_height = model_outputs
-            self.wavelengths = self.wavelengths.to(predicted_height.device)
-            self.deltas = self.deltas.to(predicted_height.device)
 
             # --- 1. Data Fidelity Loss ---
             # Enforce that the predicted height, when used to form bucket images,
@@ -104,13 +102,14 @@ def main():
             predicted_phase = (4 * np.pi / self.wavelengths) * predicted_height
 
             # Add phase shifts for buckets: [N_lasers, 1, H*W] -> [N_lasers, N_buckets, H*W]
-            phase_with_shifts = predicted_phase.unsqueeze(1) + self.deltas
+            phase_with_shifts = predicted_phase + self.deltas
 
             # Simulate bucket images
             # These are fixed parameters from the data generator
             A = 128
             B = 100
             predicted_buckets = A + B * torch.cos(phase_with_shifts)
+            predicted_buckets = predicted_buckets.view(predicted_buckets.shape[0], predicted_buckets.shape[1], -1)
 
             # targets are the bucket_images_t, shape [N_lasers, N_buckets, H*W]
             loss_data = self.mse_loss(predicted_buckets, targets)
@@ -161,6 +160,7 @@ def main():
     # Shape: [num_lasers, num_buckets, H, W] -> [num_lasers, num_buckets, H*W]
     num_lasers = bucket_images_t.shape[0]
     num_buckets = bucket_images_t.shape[1]
+
     targets = bucket_images_t.view(num_lasers, num_buckets, -1)
 
     # Instantiate the loss function
