@@ -41,5 +41,13 @@
     -   `train.py`: Adam + L-BFGS 최적화 루프를 처리하는 `Trainer` 클래스를 구현합니다.
 -   `examples/`: 라이브러리 사용법을 보여주는 스크립트가 포함되어 있습니다.
     -   `solve_helmholtz_1d.py`: 1D 헬름홀츠 방정식을 푸는 완전한 예제. 데이터 생성부터 훈련, 시각화까지 포함합니다.
+    -   `generate_bucket_data.py`: 버킷 강도 이미지와 위상 지도를 생성하는 유틸리티.
+    -   `train_bucket_pinn.py`: 생성된 버킷 데이터를 사용하여 Scaled-cPIKAN PINN을 학습합니다.
+    -   `infer_bucket_pinn.py`: 학습된 모델을 로드하여 높이 지도를 추론합니다.
+    -   `bucket` 기반 워크플로우를 위한 예제 스크립트가 아래 절에 설명되어 있습니다.
 -   `tests/`: 코드의 정확성을 보장하기 위한 단위 및 통합 테스트입니다.
 -   `helmholtz_*.png`: 예제 스크립트에 의해 생성된 출력 이미지 예시입니다.
+
+### 버킷 기반 3D 복원 워크플로우
+
+`generate_bucket_data.py`는 기본적으로 4개의 레이저와 각 레이저당 3개의 버킷 영상을 생성하여 총 12장의 이미지를 구성합니다. `--num-lasers`, `--num-buckets`, `--wavelengths` 인자를 통해 레이저와 버킷 수를 자유롭게 조절할 수 있습니다. 데이터 생성 후에는 `train_bucket_pinn.py`로 모델을 학습하고, `infer_bucket_pinn.py`로 높이 지도를 복원할 수 있습니다.
