@@ -203,7 +203,7 @@ def main():
     loss_fn = ReconstructionLossFromBuckets(
         wavelengths=args.wavelengths,
         smoothness_weight=1e-7,  # NOTE: This weight may need significant tuning
-    )
+    ).to(device)
 
     # --- Adam Optimization ---
     adam_epochs = 10000
