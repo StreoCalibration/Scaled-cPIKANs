@@ -45,6 +45,11 @@ class Trainer:
         Returns:
             dict: 모든 손실 요소의 기록을 담은 딕셔너리.
         """
+        # Ensure all inputs are on the same device as the model
+        pde_points, bc_points_dicts, ic_points_dicts, data_points = self._to_device(
+            pde_points, bc_points_dicts, ic_points_dicts, data_points
+        )
+
         print("--- 1단계 시작: Adam 최적화 ---")
         self._train_adam(pde_points, bc_points_dicts, ic_points_dicts, data_points, adam_epochs, adam_lr, log_interval)
 
@@ -98,6 +103,25 @@ class Trainer:
 
         self._log_history(self.lbfgs_loss_dict, self.adam_epochs, "L-BFGS")
         self._print_log(0, 1, self.lbfgs_loss_dict, "L-BFGS")
+
+    def _to_device(self, pde_points, bc_points_dicts, ic_points_dicts, data_points):
+        """Move all training inputs to the trainer's device."""
+        if pde_points is not None:
+            pde_points = pde_points.to(self.device)
+        if bc_points_dicts is not None:
+            bc_points_dicts = [
+                {**d, 'points': d['points'].to(self.device)} for d in bc_points_dicts
+            ]
+        if ic_points_dicts is not None:
+            ic_points_dicts = [
+                {**d, 'points': d['points'].to(self.device)} for d in ic_points_dicts
+            ]
+        if data_points is not None:
+            data_points = (
+                data_points[0].to(self.device),
+                data_points[1].to(self.device)
+            )
+        return pde_points, bc_points_dicts, ic_points_dicts, data_points
 
     def _log_history(self, loss_dict, epoch, stage):
         self.history['epoch'].append(epoch)
