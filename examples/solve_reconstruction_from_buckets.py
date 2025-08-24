@@ -157,8 +157,9 @@ def main():
     coords.requires_grad_(True)
 
     # Reshape targets (bucket images) to match flattened coordinates
-    # Shape: [4, 3, H, W] -> [4, 3, H*W]
-    targets = bucket_images_t.view(4, 3, -1)
+    num_lasers, num_buckets = bucket_images_t.shape[:2]
+    # Shape: [num_lasers, num_buckets, H, W] -> [num_lasers, num_buckets, H*W]
+    targets = bucket_images_t.view(num_lasers, num_buckets, -1)
 
     # Instantiate the loss function
     loss_fn = ReconstructionLossFromBuckets(
