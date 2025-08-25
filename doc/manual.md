@@ -166,36 +166,84 @@ Saved loss history plot to 'reconstruction_pinn_results/03_loss_history.png'
 2.  **`02_reconstruction_results.png`**: 실제 높이, PINN에 의해 재구성된 높이, 그리고 둘 사이의 오차 맵을 나란히 비교합니다.
 3.  **`03_loss_history.png`**: 훈련 과정 동안 총 손실, 데이터 충실도 손실, 평활도 손실의 감소를 보여주는 플롯입니다.
 
-## 4. U-Net 기반 재구성 파이프라인 (U-Net Based Reconstruction Pipeline)
+## 4. 전체 파이프라인 실행 (Full Pipeline Execution)
 
 ### 개요 (Overview)
-이 프로젝트에는 12개의 버킷 이미지로부터 웨이퍼 표면 높이 맵을 재구성하기 위한 최신 딥러닝 파이프라인도 포함되어 있습니다. 이 접근 방식은 이미지 대 이미지 변환을 위해 특별히 설계된 U-Net 아키텍처를 사용합니다. 파이프라인은 합성 데이터에 대한 모델의 사전 훈련과 "실제" 데이터(또는 시뮬레이션된 실제 데이터)에 대한 미세 조정의 두 단계로 구성됩니다.
+이 프로젝트는 `examples/run_pipeline.py` 스크립트를 통해 전체 머신러닝 파이프라인을 실행할 수 있는 기능을 제공합니다. 이 파이프라인은 `Scaled-cPIKAN` 모델을 사용하여 웨이퍼 표면의 높이 맵을 재구성하는 과정을 자동화하며, 다음 세 가지 주요 단계로 구성됩니다:
+
+1.  **데이터 생성 (Data Generation)**: 사전 훈련(pre-training)과 미세 조정(fine-tuning)에 사용될 합성 데이터셋을 생성합니다.
+2.  **사전 훈련 (Pre-training)**: 생성된 합성 데이터의 정답 높이 맵(ground truth height)을 사용하여 `Scaled-cPIKAN` 모델을 지도 학습 방식으로 훈련합니다.
+3.  **미세 조정 (Fine-tuning)**: 사전 훈련된 모델을 버킷 이미지만을 사용하여 물리 정보 기반으로 미세 조정합니다. 이 단계에서는 정답 높이 맵을 사용하지 않습니다.
 
 ### 사용법 (Usage)
-전체 파이프라인(데이터 생성, 사전 훈련, 미세 조정)을 실행하려면 `examples/run_pipeline.py` 스크립트를 사용하십시오. 이 스크립트는 전체 워크플로우를 자동화합니다.
+`examples/run_pipeline.py` 스크립트는 다양한 명령줄 인자를 통해 파이프라인의 각 단계를 제어할 수 있습니다.
 
+#### 기본 실행
+기본 설정으로 전체 파이프라인을 실행하려면 다음 명령어를 사용합니다.
 ```bash
-# 기본 설정으로 전체 파이프라인 실행
 python examples/run_pipeline.py
 ```
 
-스크립트는 다양한 명령줄 인자를 통해 맞춤 설정할 수 있습니다. 예를 들어, 에포크 수나 배치 크기를 조정할 수 있습니다:
-```bash
-# 더 많은 에포크로 실행
-python examples/run_pipeline.py --pretrain-epochs 20 --finetune-epochs 15
-```
-
-사용 가능한 모든 인자에 대한 자세한 설명은 `--help` 플래그를 사용하여 확인할 수 있습니다:
+#### 전체 인자 목록
+`--help` 플래그를 사용하여 모든 사용 가능한 인자와 그에 대한 설명을 확인할 수 있습니다.
 ```bash
 python examples/run_pipeline.py --help
 ```
 
-### 예상 출력
+다음은 주요 인자에 대한 설명입니다.
 
-스크립트를 실행하면 먼저 사전 훈련 및 미세 조정을 위한 데이터셋을 생성합니다. 그런 다음, 사전 훈련 단계가 시작되고 각 에포크의 손실이 표시됩니다. 사전 훈련이 완료되면 미세 조정 단계가 시작됩니다. 마지막으로, 최종적으로 미세 조정된 모델이 `models/unet_final.pth`에 저장됩니다.
+**데이터 관련 인자:**
+-   `--pretrain-data-dir`: 사전 훈련 데이터셋을 저장할 디렉토리 (기본값: `synthetic_data/train`)
+-   `--finetune-data-dir`: 미세 조정 데이터셋을 저장할 디렉토리 (기본값: `real_data/train`)
+-   `--num-pretrain-samples`: 생성할 사전 훈련 샘플의 수 (기본값: `10`)
+-   `--num-finetune-samples`: 생성할 미세 조정 샘플의 수 (기본값: `5`)
+-   `--image-size`: 생성할 합성 이미지의 크기 (픽셀 단위, 기본값: `512`)
+-   `--num-buckets`: 레이저 당 버킷 이미지의 수 (기본값: `3`)
+-   `--wavelengths`: 사용할 레이저 파장 목록 (미터 단위, 기본값: `635e-9 525e-9 450e-9 405e-9`)
+-   `--output-format`: 생성할 버킷 이미지의 포맷 (`npy`, `bmp`, `png` 중 선택, 기본값: `npy`)
+
+**모델 저장 관련 인자:**
+-   `--save-path`: 훈련된 최종 모델을 저장할 경로 (기본값: `models/pinn_final.pth`)
+
+**훈련 관련 인자:**
+-   `--patch-size`: 훈련에 사용할 이미지 패치의 크기 (기본값: `64`)
+-   `--pretrain-epochs`: 사전 훈련 에포크 수 (기본값: `10`)
+-   `--pretrain-lr`: 사전 훈련 학습률 (기본값: `1e-3`)
+-   `--finetune-epochs`: 미세 조정 에포크 수 (기본값: `10`)
+-   `--finetune-lr`: 미세 조정 학습률 (기본값: `1e-5`)
+-   `--smoothness-weight`: 미세 조정 시 사용될 평활도 손실의 가중치 (기본값: `1e-7`)
+
+### 사용 예시
+-   **더 많은 에포크와 큰 패치 사이즈로 훈련 실행:**
+    ```bash
+    python examples/run_pipeline.py \
+        --pretrain-epochs 50 \
+        --finetune-epochs 30 \
+        --patch-size 128 \
+        --pretrain-lr 5e-4 \
+        --save-path "models/pinn_large_patch.pth"
+    ```
+-   **데이터 생성만 수행 (기존 데이터가 없는 경우):**
+    스크립트는 데이터 디렉토리가 이미 존재하면 데이터 생성을 건너뛰므로, 데이터만 생성하려면 먼저 해당 디렉토리를 삭제하거나 다른 경로를 지정해야 합니다.
+    ```bash
+    python examples/run_pipeline.py \
+        --pretrain-data-dir "new_pretrain_data" \
+        --finetune-data-dir "new_finetune_data" \
+        --pretrain-epochs 0 \
+        --finetune-epochs 0
+    ```
+
+### 예상 출력
+스크립트를 실행하면 다음과 같은 순서로 출력이 표시됩니다.
+
+1.  사용할 장치(CPU 또는 CUDA)가 표시됩니다.
+2.  사전 훈련 및 미세 조정을 위한 데이터셋 생성이 진행됩니다 (해당 디렉토리가 비어있는 경우).
+3.  사전 훈련 단계가 시작되고, 각 에포크마다 진행률과 손실이 표시됩니다.
+4.  사전 훈련이 완료되면 미세 조정 단계가 시작되고, 마찬가지로 진행 상황이 출력됩니다.
+5.  모든 과정이 끝나면 최종 모델이 지정된 경로에 저장됩니다.
 
 ```
-Using device: cpu
+Using device: cuda
 Generating 10 data samples in synthetic_data/train...
 Data generation complete for synthetic_data/train.
 Generating 5 data samples in real_data/train...
@@ -204,18 +252,20 @@ Data generation complete for real_data/train.
 ==================================================
                     PRE-TRAINING
 ==================================================
-Pre-train Epoch 1/10, Average Loss: 0.123456
+Pre-train Epoch 1/10: 100%|██████████| 10/10 [00:01<00:00,  8.00it/s, loss=0.001]
+Pre-train Epoch 1/10, Average Loss: 0.001234
 ...
 Pre-training finished.
 
 ==================================================
-                    FINE-TUNING
+                     FINE-TUNING
 ==================================================
-Finetune Epoch 1/10, Average Loss: 9876.543210
+Finetune Epoch 1/10: 100%|██████████| 5/5 [00:02<00:00,  2.50it/s, loss=0.05]
+Finetune Epoch 1/10, Average Loss: 0.054321
 ...
 Fine-tuning finished.
 
-Final fine-tuned model saved to models/unet_final.pth
+Final fine-tuned model saved to models/pinn_final.pth
 ```
 
 ## 5. 테스트 (Testing)
