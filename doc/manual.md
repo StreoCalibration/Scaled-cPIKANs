@@ -165,3 +165,72 @@ Saved loss history plot to 'reconstruction_pinn_results/03_loss_history.png'
 1.  **`01_input_data.png`**: PINN 훈련에 사용된 실제 높이와 4개의 시뮬레이션된 래핑된 위상 맵을 보여주는 시각화입니다.
 2.  **`02_reconstruction_results.png`**: 실제 높이, PINN에 의해 재구성된 높이, 그리고 둘 사이의 오차 맵을 나란히 비교합니다.
 3.  **`03_loss_history.png`**: 훈련 과정 동안 총 손실, 데이터 충실도 손실, 평활도 손실의 감소를 보여주는 플롯입니다.
+
+## 4. U-Net 기반 재구성 파이프라인 (U-Net Based Reconstruction Pipeline)
+
+### 개요 (Overview)
+이 프로젝트에는 12개의 버킷 이미지로부터 웨이퍼 표면 높이 맵을 재구성하기 위한 최신 딥러닝 파이프라인도 포함되어 있습니다. 이 접근 방식은 이미지 대 이미지 변환을 위해 특별히 설계된 U-Net 아키텍처를 사용합니다. 파이프라인은 합성 데이터에 대한 모델의 사전 훈련과 "실제" 데이터(또는 시뮬레이션된 실제 데이터)에 대한 미세 조정의 두 단계로 구성됩니다.
+
+### 사용법 (Usage)
+전체 파이프라인(데이터 생성, 사전 훈련, 미세 조정)을 실행하려면 `examples/run_pipeline.py` 스크립트를 사용하십시오. 이 스크립트는 전체 워크플로우를 자동화합니다.
+
+```bash
+# 기본 설정으로 전체 파이프라인 실행
+python examples/run_pipeline.py
+```
+
+스크립트는 다양한 명령줄 인자를 통해 맞춤 설정할 수 있습니다. 예를 들어, 에포크 수나 배치 크기를 조정할 수 있습니다:
+```bash
+# 더 많은 에포크로 실행
+python examples/run_pipeline.py --pretrain-epochs 20 --finetune-epochs 15
+```
+
+사용 가능한 모든 인자에 대한 자세한 설명은 `--help` 플래그를 사용하여 확인할 수 있습니다:
+```bash
+python examples/run_pipeline.py --help
+```
+
+### 예상 출력
+
+스크립트를 실행하면 먼저 사전 훈련 및 미세 조정을 위한 데이터셋을 생성합니다. 그런 다음, 사전 훈련 단계가 시작되고 각 에포크의 손실이 표시됩니다. 사전 훈련이 완료되면 미세 조정 단계가 시작됩니다. 마지막으로, 최종적으로 미세 조정된 모델이 `models/unet_final.pth`에 저장됩니다.
+
+```
+Using device: cpu
+Generating 10 data samples in synthetic_data/train...
+Data generation complete for synthetic_data/train.
+Generating 5 data samples in real_data/train...
+Data generation complete for real_data/train.
+
+==================================================
+                    PRE-TRAINING
+==================================================
+Pre-train Epoch 1/10, Average Loss: 0.123456
+...
+Pre-training finished.
+
+==================================================
+                    FINE-TUNING
+==================================================
+Finetune Epoch 1/10, Average Loss: 9876.543210
+...
+Fine-tuning finished.
+
+Final fine-tuned model saved to models/unet_final.pth
+```
+
+## 5. 테스트 (Testing)
+
+프로젝트에는 `tests/` 디렉토리에 단위 테스트가 포함되어 있습니다. 이 테스트들은 `unittest` 프레임워크를 기반으로 하며, 프로젝트의 핵심 구성 요소의 정확성을 보장하는 데 도움이 됩니다.
+
+### 테스트 실행
+모든 테스트 스위트(기존 `Scaled-cPIKAN` 및 새로운 U-Net 파이프라인 테스트 포함)를 실행하려면, 프로젝트의 루트 디렉토리에서 다음 명령을 실행하십시오:
+```bash
+python -m unittest discover tests
+```
+"OK" 메시지와 함께 모든 테스트가 통과해야 합니다.
+
+### 테스트 구조
+- **`tests/test_models.py`**: `Scaled_cPIKAN` 모델과 같은 원래 PINN 구성 요소를 테스트합니다.
+- **`tests/test_data.py`**: 원래 데이터 처리 유틸리티를 테스트합니다.
+- **`tests/test_integration.py`**: 원래 PINN 파이프라인의 통합 테스트를 수행합니다.
+- **`tests/test_unet_pipeline.py`**: 새로운 U-Net 파이프라인의 핵심 구성 요소에 대한 테스트를 포함합니다. 여기에는 `UNet` 모델의 순방향 패스, `WaferPatchDataset`의 데이터 로딩 및 증강, `UNetPhysicsLoss`의 계산이 포함됩니다.

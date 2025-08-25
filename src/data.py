@@ -72,3 +72,96 @@ class LatinHypercubeSampler:
         samples = self.domain_min + (self.domain_max - self.domain_min) * unit_samples_tensor
 
         return samples
+
+
+import os
+import numpy as np
+from torch.utils.data import Dataset
+import glob
+
+class WaferPatchDataset(Dataset):
+    """
+    A PyTorch Dataset for loading wafer inspection data.
+
+    This dataset handles both synthetic and real data by loading patches
+    from bucket images and an optional ground truth height map. It supports
+    on-the-fly patch extraction and data augmentation.
+    """
+    def __init__(self, data_dir: str, patch_size: int, use_augmentation: bool = False, real_data: bool = False):
+        """
+        Args:
+            data_dir (str): Path to the directory containing the data samples.
+                            (e.g., 'synthetic_data/train')
+            patch_size (int): The size (width and height) of the patches to extract.
+            use_augmentation (bool): Whether to apply data augmentation.
+            real_data (bool): If True, assumes no ground truth is available.
+        """
+        self.data_dir = data_dir
+        self.patch_size = patch_size
+        self.use_augmentation = use_augmentation
+        self.real_data = real_data
+
+        self.sample_paths = sorted(glob.glob(os.path.join(self.data_dir, "sample_*")))
+        if not self.sample_paths:
+            raise FileNotFoundError(f"No samples found in directory: {self.data_dir}")
+
+    def __len__(self):
+        return len(self.sample_paths)
+
+    def __getitem__(self, idx):
+        sample_path = self.sample_paths[idx]
+
+        # Load bucket images (input)
+        bucket_images_path = os.path.join(sample_path, "bucket_images.npy")
+        bucket_images = np.load(bucket_images_path).astype(np.float32) # Shape: (12, H, W)
+
+        # Load ground truth height map (target) if available
+        if not self.real_data:
+            ground_truth_path = os.path.join(sample_path, "ground_truth.npy")
+            ground_truth = np.load(ground_truth_path).astype(np.float32) # Shape: (H, W)
+        else:
+            ground_truth = None # No ground truth for real data
+
+        # --- Patch Extraction ---
+        _, H, W = bucket_images.shape
+        if H < self.patch_size or W < self.patch_size:
+            raise ValueError(f"Image size ({H}, {W}) is smaller than patch size ({self.patch_size}).")
+
+        # Get random top-left corner for the patch
+        top = np.random.randint(0, H - self.patch_size + 1)
+        left = np.random.randint(0, W - self.patch_size + 1)
+
+        # Extract patch from bucket images
+        input_patch = bucket_images[:, top:top+self.patch_size, left:left+self.patch_size]
+
+        # Extract patch from ground truth
+        if ground_truth is not None:
+            target_patch = ground_truth[top:top+self.patch_size, left:left+self.patch_size]
+            # Add channel dimension to ground truth
+            target_patch = np.expand_dims(target_patch, axis=0) # Shape: (1, patch_size, patch_size)
+        else:
+            # For real data, we might not have a target, but can return a dummy one
+            target_patch = np.zeros((1, self.patch_size, self.patch_size), dtype=np.float32)
+
+        # --- Data Augmentation ---
+        if self.use_augmentation:
+            # Random horizontal flip
+            if np.random.rand() > 0.5:
+                input_patch = np.ascontiguousarray(input_patch[:, :, ::-1])
+                target_patch = np.ascontiguousarray(target_patch[:, :, ::-1])
+
+            # Random vertical flip
+            if np.random.rand() > 0.5:
+                input_patch = np.ascontiguousarray(input_patch[:, ::-1, :])
+                target_patch = np.ascontiguousarray(target_patch[:, ::-1, :])
+
+            # Random 90-degree rotation
+            k = np.random.randint(0, 4)
+            input_patch = np.rot90(input_patch, k, axes=(1, 2))
+            target_patch = np.rot90(target_patch, k, axes=(1, 2))
+
+        # --- Convert to Tensor ---
+        input_tensor = torch.from_numpy(np.ascontiguousarray(input_patch))
+        target_tensor = torch.from_numpy(np.ascontiguousarray(target_patch))
+
+        return input_tensor, target_tensor

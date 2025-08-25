@@ -100,3 +100,83 @@ class PhysicsInformedLoss(nn.Module):
 
         loss_dict['total_loss'] = total_loss
         return total_loss, loss_dict
+
+
+import torch.nn.functional as F
+import numpy as np
+
+class UNetPhysicsLoss(nn.Module):
+    """
+    A physics-informed loss function for the U-Net model.
+
+    This loss does not require a ground truth height map. Instead, it computes
+    the loss based on physical consistency with the input bucket images and
+    a smoothness prior on the reconstructed height map.
+    """
+    def __init__(self, wavelengths: list[float], num_buckets: int, smoothness_weight: float = 1e-4):
+        super().__init__()
+        self.wavelengths = torch.tensor(wavelengths, dtype=torch.float32).view(-1, 1, 1, 1)
+        deltas = torch.arange(num_buckets, dtype=torch.float32) * (2 * np.pi / num_buckets)
+        self.deltas = deltas.view(1, num_buckets, 1, 1)
+        self.smoothness_weight = smoothness_weight
+        self.mse_loss = nn.MSELoss()
+        self.metrics = {}
+
+        # Pre-define a Laplacian kernel for the smoothness loss
+        laplacian_kernel = torch.tensor([[0, 1, 0], [1, -4, 1], [0, 1, 0]], dtype=torch.float32)
+        self.laplacian_kernel = laplacian_kernel.view(1, 1, 3, 3)
+
+    def forward(self, predicted_height: torch.Tensor, input_buckets: torch.Tensor) -> torch.Tensor:
+        """
+        Calculates the total loss.
+
+        Args:
+            predicted_height (torch.Tensor): The height map output from the U-Net.
+                                             Shape: (N, 1, H, W)
+            input_buckets (torch.Tensor): The original 12 bucket images that were
+                                          input to the U-Net. Shape: (N, 12, H, W)
+
+        Returns:
+            torch.Tensor: The total computed loss.
+        """
+        device = predicted_height.device
+        self.wavelengths = self.wavelengths.to(device)
+        self.deltas = self.deltas.to(device)
+        self.laplacian_kernel = self.laplacian_kernel.to(device)
+
+        num_lasers = len(self.wavelengths)
+        num_buckets = len(self.deltas.view(-1))
+
+        # --- 1. Data Consistency Loss ---
+        # Simulate bucket images from the predicted height map
+        # Reshape height map for broadcasting with wavelengths and deltas
+        height_map_expanded = predicted_height.unsqueeze(1) # (N, 1, 1, H, W)
+
+        # Physical simulation formula
+        phase = (4 * np.pi / self.wavelengths) * height_map_expanded # (N, num_lasers, 1, H, W)
+        phase_with_shifts = phase + self.deltas # (N, num_lasers, num_buckets, H, W)
+
+        A, B = 128, 100
+        predicted_buckets = A + B * torch.cos(phase_with_shifts)
+
+        # Reshape to match input_buckets shape
+        predicted_buckets = predicted_buckets.view_as(input_buckets)
+
+        loss_data = self.mse_loss(predicted_buckets, input_buckets)
+
+        # --- 2. Smoothness Regularization Loss ---
+        # Calculate the Laplacian of the predicted height map
+        laplacian = F.conv2d(predicted_height, self.laplacian_kernel, padding=1)
+        loss_smoothness = self.mse_loss(laplacian, torch.zeros_like(laplacian))
+
+        # --- Total Loss ---
+        total_loss = loss_data + self.smoothness_weight * loss_smoothness
+
+        # Store metrics for logging
+        self.metrics = {
+            "loss_total": total_loss.item(),
+            "loss_data": loss_data.item(),
+            "loss_smoothness": loss_smoothness.item(),
+        }
+
+        return total_loss
