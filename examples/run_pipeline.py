@@ -8,9 +8,9 @@ from torch.utils.data import DataLoader
 from tqdm import tqdm
 import numpy as np
 
-from src.data import WaferPatchDataset
-from src.models import UNet
-from src.loss import UNetPhysicsLoss
+from src.data import PinnPatchDataset
+from src.models import Scaled_cPIKAN
+from src.loss import PinnReconstructionLoss
 
 # --- Data Generation Logic ---
 
@@ -35,19 +35,16 @@ def simulate_bucket_images(height_map, wavelengths, num_buckets=3):
     predicted_buckets = A + B * torch.cos(phase_with_shifts)
     return predicted_buckets.view(num_lasers * num_buckets, height, width).numpy()
 
-def generate_data(output_dir, num_samples=2):
+def generate_data(output_dir, num_samples, image_size, num_buckets, wavelengths):
     """Generates a dataset."""
     if os.path.exists(output_dir):
         print(f"Data directory {output_dir} already exists. Skipping generation.")
         return
 
     print(f"Generating {num_samples} data samples in {output_dir}...")
-    image_size = (512, 512)
     num_bumps_per_sample = 5
     bump_diameter = 50
     bump_height = 40e-6
-    wavelengths = [635e-9, 525e-9, 450e-9, 405e-9]
-    num_buckets = 3
 
     os.makedirs(output_dir, exist_ok=True)
     H, W = image_size
@@ -76,13 +73,22 @@ def main(args):
     # --- Setup ---
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
     print(f"Using device: {device}")
+    image_size = (args.image_size, args.image_size)
+    wavelengths = args.wavelengths
 
     # --- Generate Datasets ---
-    generate_data(args.pretrain_data_dir, num_samples=args.num_pretrain_samples)
-    generate_data(args.finetune_data_dir, num_samples=args.num_finetune_samples)
+    generate_data(args.pretrain_data_dir, args.num_pretrain_samples, image_size, args.num_buckets, wavelengths)
+    generate_data(args.finetune_data_dir, args.num_finetune_samples, image_size, args.num_buckets, wavelengths)
 
     # --- Model ---
-    model = UNet(n_channels=12, n_classes=1).to(device)
+    domain_min = torch.tensor([0.0, 0.0], device=device)
+    domain_max = torch.tensor([1.0, 1.0], device=device)
+    model = Scaled_cPIKAN(
+        layers_dims=[2, 128, 128, 128, 1],
+        cheby_order=8,
+        domain_min=domain_min,
+        domain_max=domain_max
+    ).to(device)
 
     # ===================================================================
     #                            PRE-TRAINING
@@ -91,14 +97,14 @@ def main(args):
     print(" " * 20 + "PRE-TRAINING")
     print("="*50)
 
-    pretrain_dataset = WaferPatchDataset(
+    pretrain_dataset = PinnPatchDataset(
         data_dir=args.pretrain_data_dir,
         patch_size=args.patch_size,
-        use_augmentation=True
+        full_image_size=image_size,
+        real_data=False
     )
-    pretrain_dataloader = DataLoader(
-        pretrain_dataset, batch_size=args.pretrain_batch_size, shuffle=True, num_workers=2
-    )
+    # Note: batch_size for PINN training is typically 1, as we process a full patch of points
+    pretrain_dataloader = DataLoader(pretrain_dataset, batch_size=1, shuffle=True, num_workers=2)
 
     pretrain_criterion = nn.MSELoss()
     pretrain_optimizer = torch.optim.Adam(model.parameters(), lr=args.pretrain_lr)
@@ -107,13 +113,16 @@ def main(args):
         model.train()
         epoch_loss = 0.0
         progress_bar = tqdm(pretrain_dataloader, desc=f"Pre-train Epoch {epoch+1}/{args.pretrain_epochs}")
-        for inputs, targets in progress_bar:
-            inputs, targets = inputs.to(device), targets.to(device)
-            outputs = model(inputs)
-            loss = pretrain_criterion(outputs, targets)
+        for coords, _, gt_patch in progress_bar:
+            coords, gt_patch = coords.squeeze(0).to(device), gt_patch.squeeze(0).to(device)
+
+            predicted_height = model(coords).view(1, -1)
+            loss = pretrain_criterion(predicted_height, gt_patch)
+
             pretrain_optimizer.zero_grad()
             loss.backward()
             pretrain_optimizer.step()
+
             epoch_loss += loss.item()
             progress_bar.set_postfix(loss=loss.item())
         avg_loss = epoch_loss / len(pretrain_dataloader)
@@ -128,19 +137,18 @@ def main(args):
     print(" " * 20 + "FINE-TUNING")
     print("="*50)
 
-    finetune_dataset = WaferPatchDataset(
+    finetune_dataset = PinnPatchDataset(
         data_dir=args.finetune_data_dir,
         patch_size=args.patch_size,
-        use_augmentation=True,
-        real_data=True
+        full_image_size=image_size,
+        real_data=True # In fine-tuning we don't assume access to GT height
     )
-    finetune_dataloader = DataLoader(
-        finetune_dataset, batch_size=args.finetune_batch_size, shuffle=True, num_workers=2
-    )
+    finetune_dataloader = DataLoader(finetune_dataset, batch_size=1, shuffle=True, num_workers=2)
 
-    wavelengths = [635e-9, 525e-9, 450e-9, 405e-9]
-    finetune_criterion = UNetPhysicsLoss(
-        wavelengths=wavelengths, num_buckets=3, smoothness_weight=args.smoothness_weight
+    finetune_criterion = PinnReconstructionLoss(
+        wavelengths=wavelengths,
+        num_buckets=args.num_buckets,
+        smoothness_weight=args.smoothness_weight
     )
     finetune_optimizer = torch.optim.Adam(model.parameters(), lr=args.finetune_lr)
 
@@ -148,13 +156,18 @@ def main(args):
         model.train()
         epoch_loss = 0.0
         progress_bar = tqdm(finetune_dataloader, desc=f"Finetune Epoch {epoch+1}/{args.finetune_epochs}")
-        for inputs, _ in progress_bar:
-            inputs = inputs.to(device)
-            predicted_height = model(inputs)
-            loss = finetune_criterion(predicted_height, inputs)
+        for coords, bucket_patch, _ in progress_bar:
+            coords, bucket_patch = coords.squeeze(0).to(device), bucket_patch.squeeze(0).to(device)
+            coords.requires_grad_(True)
+
+            predicted_height = model(coords).view(1, -1)
+
+            loss = finetune_criterion(predicted_height, coords, bucket_patch)
+
             finetune_optimizer.zero_grad()
             loss.backward()
             finetune_optimizer.step()
+
             metrics = finetune_criterion.metrics
             epoch_loss += metrics['loss_total']
             progress_bar.set_postfix(loss=metrics['loss_total'])
@@ -177,23 +190,25 @@ if __name__ == "__main__":
     parser.add_argument("--finetune-data-dir", type=str, default="real_data/train")
     parser.add_argument("--num-pretrain-samples", type=int, default=10)
     parser.add_argument("--num-finetune-samples", type=int, default=5)
+    parser.add_argument("--image-size", type=int, default=512, help="Size of the full synthetic images.")
+    parser.add_argument("--num-buckets", type=int, default=3, help="Number of buckets per laser.")
+    parser.add_argument('--wavelengths', type=float, nargs='+', default=[635e-9, 525e-9, 450e-9, 405e-9],
+                        help='List of laser wavelengths in meters.')
 
     # Model saving
-    parser.add_argument("--save-path", type=str, default="models/unet_final.pth")
+    parser.add_argument("--save-path", type=str, default="models/pinn_final.pth")
 
     # Training args
-    parser.add_argument("--patch-size", type=int, default=256)
+    parser.add_argument("--patch-size", type=int, default=64, help="Size of the square patches to train on.")
 
     # Pre-training args
     parser.add_argument("--pretrain-epochs", type=int, default=10)
-    parser.add_argument("--pretrain-batch-size", type=int, default=4)
     parser.add_argument("--pretrain-lr", type=float, default=1e-3)
 
     # Fine-tuning args
     parser.add_argument("--finetune-epochs", type=int, default=10)
-    parser.add_argument("--finetune-batch-size", type=int, default=2)
     parser.add_argument("--finetune-lr", type=float, default=1e-5)
-    parser.add_argument("--smoothness-weight", type=float, default=1e-4)
+    parser.add_argument("--smoothness-weight", type=float, default=1e-7)
 
     args = parser.parse_args()
     main(args)

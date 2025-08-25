@@ -180,3 +180,81 @@ class UNetPhysicsLoss(nn.Module):
         }
 
         return total_loss
+
+
+class PinnReconstructionLoss(nn.Module):
+    """
+    Computes the loss for a PINN model reconstructing a height map from bucket images.
+
+    The loss has two main components:
+    1.  **Data Consistency:** The MSE between the bucket images predicted from the
+        reconstructed height map and the actual input bucket images.
+    2.  **Smoothness Regularization:** A term that penalizes non-smoothness in the
+        reconstructed height map, calculated from its Laplacian.
+    """
+    def __init__(self, wavelengths: list[float], num_buckets: int, smoothness_weight: float = 1e-7):
+        super().__init__()
+        self.wavelengths = torch.tensor(wavelengths, dtype=torch.float32).view(-1, 1, 1)
+        deltas = torch.arange(num_buckets, dtype=torch.float32) * (2 * np.pi / num_buckets)
+        self.deltas = deltas.view(1, num_buckets, 1)
+        self.smoothness_weight = smoothness_weight
+        self.mse_loss = nn.MSELoss()
+        self.metrics = {}
+        self.num_lasers = len(wavelengths)
+        self.num_buckets = num_buckets
+
+    def forward(self, predicted_height: torch.Tensor, coords: torch.Tensor, target_buckets: torch.Tensor) -> torch.Tensor:
+        """
+        Calculates the total loss.
+
+        Args:
+            predicted_height (torch.Tensor): The height map from the PINN model.
+                                             Shape: (1, N_points)
+            coords (torch.Tensor): The coordinate grid input to the model.
+                                   Shape: (N_points, 2). Requires grad.
+            target_buckets (torch.Tensor): The ground truth bucket values for the patch.
+                                           Shape: (C, N_points), where C = lasers * buckets.
+
+        Returns:
+            torch.Tensor: The total computed loss.
+        """
+        device = predicted_height.device
+        self.wavelengths = self.wavelengths.to(device)
+        self.deltas = self.deltas.to(device)
+
+        # --- 1. Data Consistency Loss ---
+        # Reshape targets to be (num_lasers, num_buckets, N_points)
+        target_buckets_reshaped = target_buckets.view(self.num_lasers, self.num_buckets, -1)
+
+        # Simulate bucket images from the predicted height map
+        # predicted_height shape: (1, N_points)
+        phase = (4 * np.pi / self.wavelengths) * predicted_height.unsqueeze(0)  # Shape: (num_lasers, 1, N_points)
+        phase_with_shifts = phase + self.deltas  # Shape: (num_lasers, num_buckets, N_points)
+
+        A, B = 128, 100
+        predicted_buckets = A + B * torch.cos(phase_with_shifts) # Shape: (num_lasers, num_buckets, N_points)
+
+        loss_data = self.mse_loss(predicted_buckets, target_buckets_reshaped)
+
+        # --- 2. Smoothness Regularization ---
+        # Detach predicted_height to avoid autograd issues with the sum, but use original for grad calc
+        h = predicted_height.squeeze(0) # Shape: (N_points)
+        grad_h = torch.autograd.grad(h.sum(), coords, create_graph=True)[0]
+        h_x, h_y = grad_h[:, 0], grad_h[:, 1]
+
+        # To compute second derivatives, we need to sum again
+        h_xx = torch.autograd.grad(h_x.sum(), coords, create_graph=True)[0][:, 0]
+        h_yy = torch.autograd.grad(h_y.sum(), coords, create_graph=True)[0][:, 1]
+
+        laplacian = h_xx + h_yy
+        loss_smoothness = self.mse_loss(laplacian, torch.zeros_like(laplacian))
+
+        # --- Total Loss ---
+        total_loss = loss_data + self.smoothness_weight * loss_smoothness
+
+        self.metrics = {
+            "loss_total": total_loss.item(),
+            "loss_data": loss_data.item(),
+            "loss_smoothness": loss_smoothness.item(),
+        }
+        return total_loss
