@@ -167,6 +167,8 @@ class WaferPatchDataset(Dataset):
         return input_tensor, target_tensor
 
 
+from PIL import Image
+
 class PinnPatchDataset(Dataset):
     """
     A PyTorch Dataset for loading wafer data for Physics-Informed models.
@@ -174,19 +176,25 @@ class PinnPatchDataset(Dataset):
     This dataset provides coordinate grids as input for a PINN model,
     and bucket image patches as the target for the loss function. It also
     provides the ground truth height map for pre-training.
+    It can load data from either a single .npy file or a sequence of image files.
     """
-    def __init__(self, data_dir: str, patch_size: int, full_image_size: tuple[int, int], real_data: bool = False):
+    def __init__(self, data_dir: str, patch_size: int, full_image_size: tuple[int, int],
+                 output_format: str = 'npy', real_data: bool = False, num_channels: int = 12):
         """
         Args:
             data_dir (str): Path to the directory containing data samples.
             patch_size (int): The size of the patches to extract.
-            full_image_size (tuple[int, int]): The size (H, W) of the original full-resolution images.
+            full_image_size (tuple[int, int]): The size (H, W) of the original images.
+            output_format (str): The format of the bucket images ('npy', 'bmp', 'png').
             real_data (bool): If True, assumes no ground truth height map is available.
+            num_channels (int): The number of bucket images (e.g., 4 lasers * 3 buckets).
         """
         self.data_dir = data_dir
         self.patch_size = patch_size
         self.H, self.W = full_image_size
+        self.output_format = output_format
         self.real_data = real_data
+        self.num_channels = num_channels
 
         self.sample_paths = sorted(glob.glob(os.path.join(self.data_dir, "sample_*")))
         if not self.sample_paths:
@@ -198,11 +206,23 @@ class PinnPatchDataset(Dataset):
     def __getitem__(self, idx):
         sample_path = self.sample_paths[idx]
 
-        # Load bucket images (target for loss)
-        bucket_images_path = os.path.join(sample_path, "bucket_images.npy")
-        bucket_images = np.load(bucket_images_path).astype(np.float32) # Shape: (C, H, W)
+        # --- Load Bucket Images based on format ---
+        if self.output_format == 'npy':
+            bucket_images_path = os.path.join(sample_path, "bucket_images.npy")
+            bucket_images = np.load(bucket_images_path).astype(np.float32)
+        elif self.output_format in ['bmp', 'png']:
+            img_paths = sorted(glob.glob(os.path.join(sample_path, f"bucket_*.{self.output_format}")))
+            if len(img_paths) != self.num_channels:
+                raise FileNotFoundError(f"Expected {self.num_channels} bucket images in {sample_path}, but found {len(img_paths)}")
 
-        # Load ground truth height map (target for pre-training)
+            # Load images and stack them
+            images = [np.array(Image.open(p), dtype=np.float32) for p in img_paths]
+            bucket_images = np.stack(images, axis=0) # Shape: (C, H, W)
+        else:
+            raise ValueError(f"Unsupported output format: {self.output_format}")
+
+
+        # --- Load ground truth height map (always .npy) ---
         if not self.real_data:
             ground_truth_path = os.path.join(sample_path, "ground_truth.npy")
             ground_truth = np.load(ground_truth_path).astype(np.float32) # Shape: (H, W)

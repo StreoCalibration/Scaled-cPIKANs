@@ -7,6 +7,7 @@ import torch.nn as nn
 from torch.utils.data import DataLoader
 from tqdm import tqdm
 import numpy as np
+from PIL import Image
 
 from src.data import PinnPatchDataset
 from src.models import Scaled_cPIKAN
@@ -35,13 +36,13 @@ def simulate_bucket_images(height_map, wavelengths, num_buckets=3):
     predicted_buckets = A + B * torch.cos(phase_with_shifts)
     return predicted_buckets.view(num_lasers * num_buckets, height, width).numpy()
 
-def generate_data(output_dir, num_samples, image_size, num_buckets, wavelengths):
+def generate_data(output_dir, num_samples, image_size, num_buckets, wavelengths, output_format='npy'):
     """Generates a dataset."""
     if os.path.exists(output_dir):
         print(f"Data directory {output_dir} already exists. Skipping generation.")
         return
 
-    print(f"Generating {num_samples} data samples in {output_dir}...")
+    print(f"Generating {num_samples} data samples in {output_dir} with format {output_format}...")
     num_bumps_per_sample = 5
     bump_diameter = 50
     bump_height = 40e-6
@@ -63,8 +64,21 @@ def generate_data(output_dir, num_samples, image_size, num_buckets, wavelengths)
         sample_dir = os.path.join(output_dir, f"sample_{i:04d}")
         os.makedirs(sample_dir, exist_ok=True)
 
+        # Always save ground truth as .npy for precision
         np.save(os.path.join(sample_dir, "ground_truth.npy"), ground_truth_height)
-        np.save(os.path.join(sample_dir, "bucket_images.npy"), bucket_images)
+
+        # Save bucket images based on the specified format
+        if output_format == 'npy':
+            np.save(os.path.join(sample_dir, "bucket_images.npy"), bucket_images)
+        elif output_format in ['bmp', 'png']:
+            # Normalize to 0-255 for standard image formats
+            bucket_images_uint8 = np.clip(bucket_images, 0, 255).astype(np.uint8)
+            for j in range(bucket_images_uint8.shape[0]):
+                img = Image.fromarray(bucket_images_uint8[j])
+                img.save(os.path.join(sample_dir, f"bucket_{j:02d}.{output_format}"))
+        else:
+            raise ValueError(f"Unsupported output format: {output_format}")
+
     print(f"Data generation complete for {output_dir}.")
 
 # --- Main Pipeline ---
@@ -77,8 +91,8 @@ def main(args):
     wavelengths = args.wavelengths
 
     # --- Generate Datasets ---
-    generate_data(args.pretrain_data_dir, args.num_pretrain_samples, image_size, args.num_buckets, wavelengths)
-    generate_data(args.finetune_data_dir, args.num_finetune_samples, image_size, args.num_buckets, wavelengths)
+    generate_data(args.pretrain_data_dir, args.num_pretrain_samples, image_size, args.num_buckets, wavelengths, args.output_format)
+    generate_data(args.finetune_data_dir, args.num_finetune_samples, image_size, args.num_buckets, wavelengths, args.output_format)
 
     # --- Model ---
     domain_min = torch.tensor([0.0, 0.0], device=device)
@@ -97,11 +111,14 @@ def main(args):
     print(" " * 20 + "PRE-TRAINING")
     print("="*50)
 
+    num_channels = len(args.wavelengths) * args.num_buckets
     pretrain_dataset = PinnPatchDataset(
         data_dir=args.pretrain_data_dir,
         patch_size=args.patch_size,
         full_image_size=image_size,
-        real_data=False
+        output_format=args.output_format,
+        real_data=False,
+        num_channels=num_channels
     )
     # Note: batch_size for PINN training is typically 1, as we process a full patch of points
     pretrain_dataloader = DataLoader(pretrain_dataset, batch_size=1, shuffle=True, num_workers=2)
@@ -141,7 +158,9 @@ def main(args):
         data_dir=args.finetune_data_dir,
         patch_size=args.patch_size,
         full_image_size=image_size,
-        real_data=True # In fine-tuning we don't assume access to GT height
+        output_format=args.output_format,
+        real_data=True, # In fine-tuning we don't assume access to GT height
+        num_channels=num_channels
     )
     finetune_dataloader = DataLoader(finetune_dataset, batch_size=1, shuffle=True, num_workers=2)
 
@@ -194,6 +213,8 @@ if __name__ == "__main__":
     parser.add_argument("--num-buckets", type=int, default=3, help="Number of buckets per laser.")
     parser.add_argument('--wavelengths', type=float, nargs='+', default=[635e-9, 525e-9, 450e-9, 405e-9],
                         help='List of laser wavelengths in meters.')
+    parser.add_argument('--output-format', type=str, default='npy', choices=['npy', 'bmp', 'png'],
+                        help='Output format for generated bucket images.')
 
     # Model saving
     parser.add_argument("--save-path", type=str, default="models/pinn_final.pth")
