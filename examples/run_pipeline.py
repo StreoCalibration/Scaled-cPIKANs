@@ -91,8 +91,14 @@ def main(args):
     wavelengths = args.wavelengths
 
     # --- Generate Datasets ---
+    # Pre-training data is always generated synthetically
     generate_data(args.pretrain_data_dir, args.num_pretrain_samples, image_size, args.num_buckets, wavelengths, args.output_format)
-    generate_data(args.finetune_data_dir, args.num_finetune_samples, image_size, args.num_buckets, wavelengths, args.output_format)
+
+    # Fine-tuning data can be user-provided (default) or generated (if flag is set)
+    if args.generate_finetune_data:
+        generate_data(args.finetune_data_dir, args.num_finetune_samples, image_size, args.num_buckets, wavelengths, args.output_format)
+    else:
+        print(f"Skipping fine-tuning data generation. Expecting user-provided data in {args.finetune_data_dir}.")
 
     # --- Model ---
     domain_min = torch.tensor([0.0, 0.0], device=device)
@@ -205,16 +211,17 @@ if __name__ == "__main__":
     parser = argparse.ArgumentParser(description="Run the full pre-training and fine-tuning pipeline for wafer inspection.")
 
     # Data args
-    parser.add_argument("--pretrain-data-dir", type=str, default="synthetic_data/train")
-    parser.add_argument("--finetune-data-dir", type=str, default="real_data/train")
-    parser.add_argument("--num-pretrain-samples", type=int, default=10)
-    parser.add_argument("--num-finetune-samples", type=int, default=5)
+    parser.add_argument("--pretrain-data-dir", type=str, default="synthetic_data/train", help="Directory for pre-training dataset.")
+    parser.add_argument("--finetune-data-dir", type=str, default="real_data/train", help="Directory for fine-tuning dataset.")
+    parser.add_argument("--generate-finetune-data", action="store_true", help="Flag to generate synthetic data for fine-tuning. If not set, user-provided data is expected.")
+    parser.add_argument("--num-pretrain-samples", type=int, default=10, help="Number of synthetic samples for pre-training.")
+    parser.add_argument("--num-finetune-samples", type=int, default=5, help="Number of synthetic samples for fine-tuning (if generated).")
     parser.add_argument("--image-size", type=int, default=512, help="Size of the full synthetic images.")
     parser.add_argument("--num-buckets", type=int, default=3, help="Number of buckets per laser.")
     parser.add_argument('--wavelengths', type=float, nargs='+', default=[635e-9, 525e-9, 450e-9, 405e-9],
                         help='List of laser wavelengths in meters.')
-    parser.add_argument('--output-format', type=str, default='npy', choices=['npy', 'bmp', 'png'],
-                        help='Output format for generated bucket images.')
+    parser.add_argument('--output-format', type=str, default='bmp', choices=['bmp', 'png'],
+                        help='Output format for generated bucket images. Default is bmp.')
 
     # Model saving
     parser.add_argument("--save-path", type=str, default="models/pinn_final.pth")

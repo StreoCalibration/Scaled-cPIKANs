@@ -77,7 +77,7 @@
     - `--num-lasers`: 시뮬레이션할 레이저 파장의 수
     - `--num-buckets`: 각 레이저에서 측정하는 버킷 이미지 개수
     - `--wavelengths`: 쉼표로 구분된 파장 목록(µm)
-    실행 후 `reconstruction_data/` 폴더에 `ground_truth_height.npy`, `wrapped_phase_laser_1.npy` 등 여러 `.npy` 파일이 생성됩니다.
+    실행 후 `reconstruction_data/` 폴더에 `ground_truth_height.npy`와 여러 `bucket_XX.bmp` 이미지 파일들이 생성됩니다.
 
 2.  **학습**
     ```bash
@@ -171,18 +171,22 @@ Saved loss history plot to 'reconstruction_pinn_results/03_loss_history.png'
 ### 개요 (Overview)
 이 프로젝트는 `examples/run_pipeline.py` 스크립트를 통해 전체 머신러닝 파이프라인을 실행할 수 있는 기능을 제공합니다. 이 파이프라인은 `Scaled-cPIKAN` 모델을 사용하여 웨이퍼 표면의 높이 맵을 재구성하는 과정을 자동화하며, 다음 세 가지 주요 단계로 구성됩니다:
 
-1.  **데이터 생성 (Data Generation)**: 사전 훈련(pre-training)과 미세 조정(fine-tuning)에 사용될 합성 데이터셋을 생성합니다.
-2.  **사전 훈련 (Pre-training)**: 생성된 합성 데이터의 정답 높이 맵(ground truth height)을 사용하여 `Scaled-cPIKAN` 모델을 지도 학습 방식으로 훈련합니다.
-3.  **미세 조정 (Fine-tuning)**: 사전 훈련된 모델을 버킷 이미지만을 사용하여 물리 정보 기반으로 미세 조정합니다. 이 단계에서는 정답 높이 맵을 사용하지 않습니다.
+1.  **사전 훈련 (Pre-training)**: 스크립트는 항상 지도 학습(supervised learning)에 사용될 **합성 데이터**를 생성합니다. 이 데이터는 정답 높이 맵(ground truth height)을 포함하며, 모델이 기본적인 표면 형태를 학습하도록 돕습니다.
+2.  **미세 조정 (Fine-tuning)**: 이 단계는 두 가지 데이터 소스를 지원합니다.
+    -   **사용자 제공 실제 데이터 (기본값)**: 기본적으로 파이프라인은 사용자가 제공한 실제 측정 데이터(버킷 이미지)를 사용하여 모델을 미세 조정합니다. 이 과정은 물리 정보 기반(physics-informed)이며 정답 높이 맵을 필요로 하지 않습니다.
+    -   **합성 데이터 생성 (옵션)**: 사용자가 실제 데이터를 가지고 있지 않은 경우, `--generate-finetune-data` 플래그를 사용하여 미세 조정을 위한 **합성 데이터**를 생성하도록 요청할 수 있습니다.
 
 ### 사용법 (Usage)
-`examples/run_pipeline.py` 스크립트는 다양한 명령줄 인자를 통해 파이프라인의 각 단계를 제어할 수 있습니다.
+`examples/run_pipeline.py` 스크립트는 다양한 명령줄 인자를 통해 파이p라인의 각 단계를 제어할 수 있습니다.
 
-#### 기본 실행
-기본 설정으로 전체 파이프라인을 실행하려면 다음 명령어를 사용합니다.
+#### 기본 실행 (실제 데이터 사용)
+미세 조정을 위해 **사용자 제공 실제 데이터**를 사용하는 경우, 먼저 해당 데이터를 `--finetune-data-dir` (기본값: `real_data/train`)에 준비해야 합니다. 데이터 구조는 아래의 "실제 데이터 준비" 섹션을 참조하세요.
+
+데이터가 준비되면 다음 명령어로 파이프라인을 실행합니다.
 ```bash
 python examples/run_pipeline.py
 ```
+이 명령어는 `synthetic_data/train`에 사전 훈련 데이터를 생성하고, `real_data/train`에 있는 실제 데이터를 사용하여 미세 조정을 진행합니다.
 
 #### 전체 인자 목록
 `--help` 플래그를 사용하여 모든 사용 가능한 인자와 그에 대한 설명을 확인할 수 있습니다.
@@ -193,14 +197,15 @@ python examples/run_pipeline.py --help
 다음은 주요 인자에 대한 설명입니다.
 
 **데이터 관련 인자:**
--   `--pretrain-data-dir`: 사전 훈련 데이터셋을 저장할 디렉토리 (기본값: `synthetic_data/train`)
--   `--finetune-data-dir`: 미세 조정 데이터셋을 저장할 디렉토리 (기본값: `real_data/train`)
+-   `--pretrain-data-dir`: 사전 훈련용 합성 데이터셋을 저장할 디렉토리 (기본값: `synthetic_data/train`)
+-   `--finetune-data-dir`: 미세 조정용 실제 데이터셋이 위치한 디렉토리 (기본값: `real_data/train`)
+-   `--generate-finetune-data`: 이 플래그를 사용하면 미세 조정을 위한 **합성 데이터**를 생성합니다. 실제 데이터가 없을 때 사용합니다.
 -   `--num-pretrain-samples`: 생성할 사전 훈련 샘플의 수 (기본값: `10`)
--   `--num-finetune-samples`: 생성할 미세 조정 샘플의 수 (기본값: `5`)
+-   `--num-finetune-samples`: `--generate-finetune-data` 사용 시 생성할 미세 조정 샘플의 수 (기본값: `5`)
 -   `--image-size`: 생성할 합성 이미지의 크기 (픽셀 단위, 기본값: `512`)
 -   `--num-buckets`: 레이저 당 버킷 이미지의 수 (기본값: `3`)
 -   `--wavelengths`: 사용할 레이저 파장 목록 (미터 단위, 기본값: `635e-9 525e-9 450e-9 405e-9`)
--   `--output-format`: 생성할 버킷 이미지의 포맷 (`npy`, `bmp`, `png` 중 선택, 기본값: `npy`)
+-   `--output-format`: 생성할 버킷 이미지의 포맷 (`bmp`, `png` 중 선택, 기본값: `bmp`)
 
 **모델 저장 관련 인자:**
 -   `--save-path`: 훈련된 최종 모델을 저장할 경로 (기본값: `models/pinn_final.pth`)
@@ -213,22 +218,52 @@ python examples/run_pipeline.py --help
 -   `--finetune-lr`: 미세 조정 학습률 (기본값: `1e-5`)
 -   `--smoothness-weight`: 미세 조정 시 사용될 평활도 손실의 가중치 (기본값: `1e-7`)
 
+### 실제 데이터 준비 (Preparing Real Data)
+미세 조정을 위해 실제 데이터를 사용하려면, 데이터를 다음 구조에 맞게 `--finetune-data-dir` 내에 배치해야 합니다.
+
+-   각 데이터 샘플은 고유한 하위 디렉토리(예: `sample_0000`, `sample_0001` 등)에 저장됩니다.
+-   각 샘플 디렉토리 안에는 **개별 버킷 이미지**들이 있어야 합니다. 파일명은 `bucket_`으로 시작하고 `.bmp` 또는 `.png`로 끝나야 하며, 순서대로 정렬되어야 합니다.
+-   총 이미지 수는 `레이저 수 × 버킷 수`와 일치해야 합니다. 예를 들어, 레이저 4개와 버킷 3개를 사용하는 경우, 각 샘플 디렉토리에는 `bucket_00.bmp`부터 `bucket_11.bmp`까지 총 12개의 이미지가 있어야 합니다.
+
+**디렉토리 구조 예시 (`--num-lasers 4`, `--num-buckets 3`인 경우):**
+```
+real_data/train/
+├── sample_0000/
+│   ├── bucket_00.bmp
+│   ├── bucket_01.bmp
+│   ├── bucket_02.bmp
+│   ├── ...
+│   └── bucket_11.bmp
+├── sample_0001/
+│   ├── bucket_00.bmp
+│   ├── ...
+│   └── bucket_11.bmp
+└── ...
+```
+
 ### 사용 예시
--   **더 많은 에포크와 큰 패치 사이즈로 훈련 실행:**
+-   **실제 데이터로 미세 조정 실행 (기본):**
+    `real_data/train`에 데이터가 준비되었다고 가정합니다.
     ```bash
     python examples/run_pipeline.py \
         --pretrain-epochs 50 \
         --finetune-epochs 30 \
-        --patch-size 128 \
-        --pretrain-lr 5e-4 \
-        --save-path "models/pinn_large_patch.pth"
+        --patch-size 128
     ```
--   **데이터 생성만 수행 (기존 데이터가 없는 경우):**
-    스크립트는 데이터 디렉토리가 이미 존재하면 데이터 생성을 건너뛰므로, 데이터만 생성하려면 먼저 해당 디렉토리를 삭제하거나 다른 경로를 지정해야 합니다.
+-   **합성 데이터로 미세 조정 실행:**
+    실제 데이터가 없어 미세 조정용 데이터까지 생성해야 할 경우, `--generate-finetune-data` 플래그를 추가합니다.
     ```bash
     python examples/run_pipeline.py \
-        --pretrain-data-dir "new_pretrain_data" \
-        --finetune-data-dir "new_finetune_data" \
+        --generate-finetune-data \
+        --num-finetune-samples 10 \
+        --pretrain-epochs 50 \
+        --finetune-epochs 30
+    ```
+-   **데이터 생성만 수행:**
+    사전 훈련 및 미세 조정용 합성 데이터를 생성만 하고 훈련은 건너뛰려면 에포크 수를 0으로 설정합니다.
+    ```bash
+    python examples/run_pipeline.py \
+        --generate-finetune-data \
         --pretrain-epochs 0 \
         --finetune-epochs 0
     ```
@@ -237,8 +272,11 @@ python examples/run_pipeline.py --help
 스크립트를 실행하면 다음과 같은 순서로 출력이 표시됩니다.
 
 1.  사용할 장치(CPU 또는 CUDA)가 표시됩니다.
-2.  사전 훈련 및 미세 조정을 위한 데이터셋 생성이 진행됩니다 (해당 디렉토리가 비어있는 경우).
-3.  사전 훈련 단계가 시작되고, 각 에포크마다 진행률과 손실이 표시됩니다.
+2.  사전 훈련 데이터셋 생성이 진행됩니다.
+3.  미세 조정 데이터에 대한 처리 방식이 표시됩니다.
+    -   (기본) `Skipping fine-tuning data generation. Expecting user-provided data in real_data/train.`
+    -   (`--generate-finetune-data` 사용 시) `Generating 5 data samples in real_data/train...`
+4.  사전 훈련 단계가 시작되고, 각 에포크마다 진행률과 손실이 표시됩니다.
 4.  사전 훈련이 완료되면 미세 조정 단계가 시작되고, 마찬가지로 진행 상황이 출력됩니다.
 5.  모든 과정이 끝나면 최종 모델이 지정된 경로에 저장됩니다.
 
@@ -246,8 +284,7 @@ python examples/run_pipeline.py --help
 Using device: cuda
 Generating 10 data samples in synthetic_data/train...
 Data generation complete for synthetic_data/train.
-Generating 5 data samples in real_data/train...
-Data generation complete for real_data/train.
+Skipping fine-tuning data generation. Expecting user-provided data in real_data/train.
 
 ==================================================
                     PRE-TRAINING

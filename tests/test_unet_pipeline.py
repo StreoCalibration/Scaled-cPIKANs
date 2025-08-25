@@ -4,6 +4,7 @@ import numpy as np
 import os
 import shutil
 import sys
+from PIL import Image
 
 # Add the src directory to the Python path
 sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), '..')))
@@ -18,17 +19,24 @@ class TestUNetPipeline(unittest.TestCase):
         """Set up a temporary directory with dummy data for testing."""
         self.test_dir = "temp_test_data"
         os.makedirs(self.test_dir, exist_ok=True)
+        self.num_channels = 12
+        self.output_format = 'bmp'
 
         # Create a dummy data sample
         sample_dir = os.path.join(self.test_dir, "sample_0000")
         os.makedirs(sample_dir, exist_ok=True)
 
-        # Dummy data arrays (12 channels for input, 512x512)
-        self.H, self.W = 512, 512
-        dummy_buckets = np.random.rand(12, self.H, self.W).astype(np.float32)
+        # Dummy data arrays (12 channels for input, 64x64)
+        self.H, self.W = 64, 64 # Use smaller images for faster tests
+        dummy_buckets = np.random.randint(0, 256, size=(self.num_channels, self.H, self.W), dtype=np.uint8)
         dummy_gt = np.random.rand(self.H, self.W).astype(np.float32)
 
-        np.save(os.path.join(sample_dir, "bucket_images.npy"), dummy_buckets)
+        # Save dummy buckets as individual BMP files
+        for i in range(self.num_channels):
+            img = Image.fromarray(dummy_buckets[i])
+            img.save(os.path.join(sample_dir, f"bucket_{i:02d}.{self.output_format}"))
+
+        # Ground truth is still saved as .npy for precision
         np.save(os.path.join(sample_dir, "ground_truth.npy"), dummy_gt)
 
     def tearDown(self):
@@ -53,9 +61,14 @@ class TestUNetPipeline(unittest.TestCase):
 
     def test_wafer_patch_dataset(self):
         """Tests the WaferPatchDataset."""
-        patch_size = 256
+        patch_size = 32 # Smaller patch size for test
 
-        dataset = WaferPatchDataset(data_dir=self.test_dir, patch_size=patch_size)
+        dataset = WaferPatchDataset(
+            data_dir=self.test_dir,
+            patch_size=patch_size,
+            num_channels=self.num_channels,
+            output_format=self.output_format
+        )
 
         # Check dataset length
         self.assertEqual(len(dataset), 1)
@@ -64,7 +77,7 @@ class TestUNetPipeline(unittest.TestCase):
         input_tensor, target_tensor = dataset[0]
 
         # Check tensor shapes
-        self.assertEqual(input_tensor.shape, (12, patch_size, patch_size))
+        self.assertEqual(input_tensor.shape, (self.num_channels, patch_size, patch_size))
         self.assertEqual(target_tensor.shape, (1, patch_size, patch_size))
 
         # Check tensor types
