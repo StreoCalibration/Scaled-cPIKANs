@@ -33,6 +33,9 @@ training.log
 reconstruction_data/
 reconstruction_pinn_results/
 reconstruction_from_buckets_results/
+synthetic_data/
+real_data/
+models/
 
 # Generated images
 helmholtz_*.png
