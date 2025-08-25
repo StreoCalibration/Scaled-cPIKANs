@@ -220,8 +220,8 @@ if __name__ == "__main__":
     parser.add_argument("--num-buckets", type=int, default=3, help="Number of buckets per laser.")
     parser.add_argument('--wavelengths', type=float, nargs='+', default=[635e-9, 525e-9, 450e-9, 405e-9],
                         help='List of laser wavelengths in meters.')
-    parser.add_argument('--output-format', type=str, default='npy', choices=['npy', 'bmp', 'png'],
-                        help='Output format for generated bucket images.')
+    parser.add_argument('--output-format', type=str, default='bmp', choices=['bmp', 'png'],
+                        help='Output format for generated bucket images. Default is bmp.')
 
     # Model saving
     parser.add_argument("--save-path", type=str, default="models/pinn_final.pth")

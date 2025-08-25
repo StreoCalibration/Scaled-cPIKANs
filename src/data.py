@@ -79,6 +79,8 @@ import numpy as np
 from torch.utils.data import Dataset
 import glob
 
+from PIL import Image
+
 class WaferPatchDataset(Dataset):
     """
     A PyTorch Dataset for loading wafer inspection data.
@@ -87,19 +89,22 @@ class WaferPatchDataset(Dataset):
     from bucket images and an optional ground truth height map. It supports
     on-the-fly patch extraction and data augmentation.
     """
-    def __init__(self, data_dir: str, patch_size: int, use_augmentation: bool = False, real_data: bool = False):
+    def __init__(self, data_dir: str, patch_size: int, use_augmentation: bool = False, real_data: bool = False, num_channels: int = 12, output_format: str = 'bmp'):
         """
         Args:
             data_dir (str): Path to the directory containing the data samples.
-                            (e.g., 'synthetic_data/train')
             patch_size (int): The size (width and height) of the patches to extract.
             use_augmentation (bool): Whether to apply data augmentation.
             real_data (bool): If True, assumes no ground truth is available.
+            num_channels (int): Number of input channels (bucket images).
+            output_format (str): Format of bucket images ('bmp', 'png').
         """
         self.data_dir = data_dir
         self.patch_size = patch_size
         self.use_augmentation = use_augmentation
         self.real_data = real_data
+        self.num_channels = num_channels
+        self.output_format = output_format
 
         self.sample_paths = sorted(glob.glob(os.path.join(self.data_dir, "sample_*")))
         if not self.sample_paths:
@@ -111,9 +116,20 @@ class WaferPatchDataset(Dataset):
     def __getitem__(self, idx):
         sample_path = self.sample_paths[idx]
 
-        # Load bucket images (input)
-        bucket_images_path = os.path.join(sample_path, "bucket_images.npy")
-        bucket_images = np.load(bucket_images_path).astype(np.float32) # Shape: (12, H, W)
+        # --- Load Bucket Images based on format ---
+        if self.output_format in ['bmp', 'png']:
+            img_paths = sorted(glob.glob(os.path.join(sample_path, f"bucket_*.{self.output_format}")))
+            if not img_paths:
+                 raise FileNotFoundError(f"No bucket images found in {sample_path} with format {self.output_format}")
+            if len(img_paths) != self.num_channels:
+                print(f"Warning: Expected {self.num_channels} images, but found {len(img_paths)} in {sample_path}")
+
+            images = [np.array(Image.open(p), dtype=np.float32) for p in img_paths]
+            bucket_images = np.stack(images, axis=0) # Shape: (C, H, W)
+        else:
+            # Kept for compatibility if ever needed, but not the default.
+            bucket_images_path = os.path.join(sample_path, "bucket_images.npy")
+            bucket_images = np.load(bucket_images_path).astype(np.float32)
 
         # Load ground truth height map (target) if available
         if not self.real_data:

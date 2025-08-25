@@ -17,6 +17,7 @@ The physics-informed loss function enforces two main constraints:
 import argparse
 import os
 import sys
+import glob
 
 import matplotlib.pyplot as plt
 import numpy as np
@@ -28,11 +29,9 @@ if project_root not in sys.path:
     sys.path.insert(0, project_root)
 
 from collections import defaultdict
+from PIL import Image
 from src.models import Scaled_cPIKAN
-from reconstruction.data_generator import (
-    DEFAULT_WAVELENGTHS,
-    generate_synthetic_data,
-)
+from reconstruction.data_generator import DEFAULT_WAVELENGTHS
 
 def main():
     """Main function to set up and run the 3D reconstruction from buckets experiment."""
@@ -59,6 +58,9 @@ def main():
         default=DEFAULT_WAVELENGTHS,
         help="Wavelength for each laser.",
     )
+    parser.add_argument("--adam-epochs", type=int, default=10000)
+    parser.add_argument("--lbfgs-epochs", type=int, default=1)
+    parser.add_argument("--log-frequency", type=int, default=500)
     args = parser.parse_args()
     if args.num_lasers is None:
         args.num_lasers = len(args.wavelengths)
@@ -73,17 +75,36 @@ def main():
     output_dir = "reconstruction_from_buckets_results"
     os.makedirs(output_dir, exist_ok=True)
 
-    grid_shape = (128, 128)
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
     print(f"Using device: {device}")
 
-    # 2. --- Data Generation ---
-    print("\nStep 1: Generating synthetic data...")
-    ground_truth_height, _, bucket_images = generate_synthetic_data(
-        shape=grid_shape,
-        wavelengths=args.wavelengths,
-        num_buckets=args.num_buckets,
-        save_path=None,  # Don't save files for this script
+    # 2. --- Data Loading ---
+    data_dir = "reconstruction_data"
+    print(f"\nStep 1: Loading data from {data_dir}...")
+    if not os.path.exists(data_dir):
+        raise FileNotFoundError(
+            f"Data directory '{data_dir}' not found. "
+            f"Please run `python -m reconstruction.data_generator` first."
+        )
+
+    # Load ground truth for final evaluation
+    gt_path = os.path.join(data_dir, "ground_truth_height.npy")
+    ground_truth_height = np.load(gt_path)
+
+    # Load bucket images
+    img_paths = sorted(glob.glob(os.path.join(data_dir, "bucket_*.bmp")))
+    if not img_paths:
+        raise FileNotFoundError(f"No BMP bucket images found in {data_dir}")
+
+    bucket_images = [np.array(Image.open(p), dtype=np.float32) for p in img_paths]
+
+    # Get shape from the first loaded image
+    H, W = bucket_images[0].shape
+    loaded_grid_shape = (H, W)
+
+    # Stack and reshape to (num_lasers, num_buckets, H, W)
+    bucket_images = np.stack(bucket_images, axis=0).reshape(
+        args.num_lasers, args.num_buckets, H, W
     )
 
     # Convert numpy arrays to torch tensors
@@ -118,11 +139,13 @@ def main():
 
     # 3. --- Define the Physics-Informed Loss Function ---
     class ReconstructionLossFromBuckets(torch.nn.Module):
-        def __init__(self, wavelengths, smoothness_weight=1e-4):
+        def __init__(self, wavelengths, num_buckets, smoothness_weight=1e-4):
             super().__init__()
             self.register_buffer("wavelengths", torch.tensor(wavelengths, dtype=torch.float32).view(-1, 1, 1))
-            # Phase shifts for the 3 buckets
-            self.register_buffer("deltas", torch.tensor([0, 2 * np.pi / 3, 4 * np.pi / 3], dtype=torch.float32).view(1, 3, 1))
+            # Dynamically create phase shifts using numpy for robustness
+            deltas_np = np.linspace(0.0, 2.0 * np.pi, num_buckets, endpoint=False, dtype=np.float32)
+            deltas = torch.from_numpy(deltas_np)
+            self.register_buffer("deltas", deltas.view(1, num_buckets, 1))
             self.smoothness_weight = smoothness_weight
             self.mse_loss = torch.nn.MSELoss()
             self.metrics = {}
@@ -186,8 +209,8 @@ def main():
 
     # 5. --- Training ---
     print("\nStep 3: Setting up and running the training...")
-    x = torch.linspace(0, 1, grid_shape[0], device=device)
-    y = torch.linspace(0, 1, grid_shape[1], device=device)
+    x = torch.linspace(0, 1, loaded_grid_shape[0], device=device)
+    y = torch.linspace(0, 1, loaded_grid_shape[1], device=device)
     grid_x, grid_y = torch.meshgrid(x, y, indexing='ij')
     coords = torch.stack([grid_x.flatten(), grid_y.flatten()], dim=1)
     coords.requires_grad_(True)
@@ -202,18 +225,17 @@ def main():
     # Instantiate the loss function
     loss_fn = ReconstructionLossFromBuckets(
         wavelengths=args.wavelengths,
+        num_buckets=args.num_buckets,
         smoothness_weight=1e-7,  # NOTE: This weight may need significant tuning
     ).to(device)
 
     # --- Adam Optimization ---
-    adam_epochs = 10000
     adam_lr = 1e-3
-    log_frequency = 500
     optimizer_adam = torch.optim.Adam(model.parameters(), lr=adam_lr)
     loss_history = defaultdict(list)
 
-    print(f"\nTraining with Adam for {adam_epochs} epochs (lr={adam_lr})...")
-    for epoch in range(adam_epochs):
+    print(f"\nTraining with Adam for {args.adam_epochs} epochs (lr={adam_lr})...")
+    for epoch in range(args.adam_epochs):
         model.train()
         optimizer_adam.zero_grad()
 
@@ -227,15 +249,14 @@ def main():
         for key, value in loss_fn.metrics.items():
             loss_history[key].append(value)
 
-        if (epoch + 1) % log_frequency == 0 or epoch == adam_epochs - 1:
-            log_str = f"[Adam] Epoch [{epoch+1}/{adam_epochs}]"
+        if (epoch + 1) % args.log_frequency == 0 or epoch == args.adam_epochs - 1:
+            log_str = f"[Adam] Epoch [{epoch+1}/{args.adam_epochs}]"
             for key, value in loss_fn.metrics.items():
                 log_str += f" - {key}: {value:.4e}"
             print(log_str)
 
     # --- L-BFGS Optimization ---
-    lbfgs_epochs = 1
-    print(f"\nFine-tuning with L-BFGS for {lbfgs_epochs} step(s)...")
+    print(f"\nFine-tuning with L-BFGS for {args.lbfgs_epochs} step(s)...")
     optimizer_lbfgs = torch.optim.LBFGS(
         model.parameters(), max_iter=50, history_size=100, line_search_fn="strong_wolfe"
     )
@@ -249,8 +270,8 @@ def main():
             loss_history[key].append(value)
         return total_loss
 
-    for i in range(lbfgs_epochs):
-        print(f"[L-BFGS] Step {i+1}/{lbfgs_epochs}")
+    for i in range(args.lbfgs_epochs):
+        print(f"[L-BFGS] Step {i+1}/{args.lbfgs_epochs}")
         optimizer_lbfgs.step(closure)
         log_str = f"  Completed L-BFGS step."
         for key, value in loss_fn.metrics.items():
@@ -261,7 +282,7 @@ def main():
     print("\nStep 4: Evaluating model and visualizing results...")
     model.eval()
     with torch.no_grad():
-        predicted_height_t = model(coords).view(grid_shape).cpu()
+        predicted_height_t = model(coords).view(loaded_grid_shape).cpu()
 
     predicted_height = predicted_height_t.numpy()
     rmse = np.sqrt(np.mean((predicted_height - ground_truth_height)**2))

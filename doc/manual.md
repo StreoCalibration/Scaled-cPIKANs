@@ -77,7 +77,7 @@
     - `--num-lasers`: 시뮬레이션할 레이저 파장의 수
     - `--num-buckets`: 각 레이저에서 측정하는 버킷 이미지 개수
     - `--wavelengths`: 쉼표로 구분된 파장 목록(µm)
-    실행 후 `reconstruction_data/` 폴더에 `ground_truth_height.npy`, `wrapped_phase_laser_1.npy` 등 여러 `.npy` 파일이 생성됩니다.
+    실행 후 `reconstruction_data/` 폴더에 `ground_truth_height.npy`와 여러 `bucket_XX.bmp` 이미지 파일들이 생성됩니다.
 
 2.  **학습**
     ```bash
@@ -205,7 +205,7 @@ python examples/run_pipeline.py --help
 -   `--image-size`: 생성할 합성 이미지의 크기 (픽셀 단위, 기본값: `512`)
 -   `--num-buckets`: 레이저 당 버킷 이미지의 수 (기본값: `3`)
 -   `--wavelengths`: 사용할 레이저 파장 목록 (미터 단위, 기본값: `635e-9 525e-9 450e-9 405e-9`)
--   `--output-format`: 생성할 버킷 이미지의 포맷 (`npy`, `bmp`, `png` 중 선택, 기본값: `npy`)
+-   `--output-format`: 생성할 버킷 이미지의 포맷 (`bmp`, `png` 중 선택, 기본값: `bmp`)
 
 **모델 저장 관련 인자:**
 -   `--save-path`: 훈련된 최종 모델을 저장할 경로 (기본값: `models/pinn_final.pth`)
@@ -222,17 +222,22 @@ python examples/run_pipeline.py --help
 미세 조정을 위해 실제 데이터를 사용하려면, 데이터를 다음 구조에 맞게 `--finetune-data-dir` 내에 배치해야 합니다.
 
 -   각 데이터 샘플은 고유한 하위 디렉토리(예: `sample_0000`, `sample_0001` 등)에 저장됩니다.
--   각 샘플 디렉토리 안에는 `bucket_images.npy` 또는 여러 이미지 파일(예: `bucket_00.png`)이 있어야 합니다.
-    -   **`bucket_images.npy`**: `(C, H, W)` 형태의 NumPy 배열. 여기서 `C`는 채널 수(레이저 수 × 버킷 수), `H`는 높이, `W`는 너비입니다. 이 형식을 권장합니다.
-    -   **이미지 파일 (`.png`, `.bmp`)**: `--output-format` 인자에 따라 `bucket_00.png`, `bucket_01.png` 와 같은 형식의 개별 이미지 파일들.
+-   각 샘플 디렉토리 안에는 **개별 버킷 이미지**들이 있어야 합니다. 파일명은 `bucket_`으로 시작하고 `.bmp` 또는 `.png`로 끝나야 하며, 순서대로 정렬되어야 합니다.
+-   총 이미지 수는 `레이저 수 × 버킷 수`와 일치해야 합니다. 예를 들어, 레이저 4개와 버킷 3개를 사용하는 경우, 각 샘플 디렉토리에는 `bucket_00.bmp`부터 `bucket_11.bmp`까지 총 12개의 이미지가 있어야 합니다.
 
-**디렉토리 구조 예시:**
+**디렉토리 구조 예시 (`--num-lasers 4`, `--num-buckets 3`인 경우):**
 ```
 real_data/train/
 ├── sample_0000/
-│   └── bucket_images.npy
+│   ├── bucket_00.bmp
+│   ├── bucket_01.bmp
+│   ├── bucket_02.bmp
+│   ├── ...
+│   └── bucket_11.bmp
 ├── sample_0001/
-│   └── bucket_images.npy
+│   ├── bucket_00.bmp
+│   ├── ...
+│   └── bucket_11.bmp
 └── ...
 ```
 
