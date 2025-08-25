@@ -188,90 +188,96 @@ from PIL import Image
 class PinnPatchDataset(Dataset):
     """
     A PyTorch Dataset for loading wafer data for Physics-Informed models.
-
-    This dataset provides coordinate grids as input for a PINN model,
-    and bucket image patches as the target for the loss function. It also
-    provides the ground truth height map for pre-training.
-    It can load data from either a single .npy file or a sequence of image files.
+    This dataset loads the entire image into memory and provides random patches.
+    It is designed for training on a single, large image sample.
     """
-    def __init__(self, data_dir: str, patch_size: int, full_image_size: tuple[int, int],
-                 output_format: str = 'npy', real_data: bool = False, num_channels: int = 12):
+    def __init__(self, data_dir: str, patch_size: int,
+                 output_format: str = 'npy', real_data: bool = False,
+                 num_channels: int = 12, epoch_length: int = 1000):
         """
         Args:
-            data_dir (str): Path to the directory containing data samples.
+            data_dir (str): Path to the directory containing the data files
+                            (e.g., bucket_images.npy, ground_truth.npy).
             patch_size (int): The size of the patches to extract.
-            full_image_size (tuple[int, int]): The size (H, W) of the original images.
             output_format (str): The format of the bucket images ('npy', 'bmp', 'png').
             real_data (bool): If True, assumes no ground truth height map is available.
             num_channels (int): The number of bucket images (e.g., 4 lasers * 3 buckets).
+            epoch_length (int): The number of random patches to yield per "epoch".
         """
         self.data_dir = data_dir
         self.patch_size = patch_size
-        self.H, self.W = full_image_size
         self.output_format = output_format
         self.real_data = real_data
         self.num_channels = num_channels
+        self.epoch_length = epoch_length
 
-        self.sample_paths = sorted(glob.glob(os.path.join(self.data_dir, "sample_*")))
-        if not self.sample_paths:
-            raise FileNotFoundError(f"No samples found in directory: {self.data_dir}")
+        # --- Load all data into RAM once ---
+        self._load_data()
 
-    def __len__(self):
-        return len(self.sample_paths)
+        self.H, self.W = self.bucket_images.shape[1:]
+        if self.H < self.patch_size or self.W < self.patch_size:
+            raise ValueError(f"Image size ({self.H}, {self.W}) is smaller than patch size ({self.patch_size}).")
 
-    def __getitem__(self, idx):
-        sample_path = self.sample_paths[idx]
-
-        # --- Load Bucket Images based on format ---
+    def _load_data(self):
+        """Loads the bucket images and ground truth from disk into memory."""
         if self.output_format == 'npy':
-            bucket_images_path = os.path.join(sample_path, "bucket_images.npy")
-            bucket_images = np.load(bucket_images_path).astype(np.float32)
+            bucket_images_path = os.path.join(self.data_dir, "bucket_images.npy")
+            if not os.path.exists(bucket_images_path):
+                 raise FileNotFoundError(f"bucket_images.npy not found in {self.data_dir}")
+            self.bucket_images = np.load(bucket_images_path).astype(np.float32)
         elif self.output_format in ['bmp', 'png']:
-            img_paths = sorted(glob.glob(os.path.join(sample_path, f"bucket_*.{self.output_format}")))
+            img_paths = sorted(glob.glob(os.path.join(self.data_dir, f"bucket_*.{self.output_format}")))
+            if not img_paths:
+                 raise FileNotFoundError(f"No bucket images found in {self.data_dir} with format {self.output_format}")
             if len(img_paths) != self.num_channels:
-                raise FileNotFoundError(f"Expected {self.num_channels} bucket images in {sample_path}, but found {len(img_paths)}")
-
-            # Load images and stack them
+                print(f"Warning: Expected {self.num_channels} images, but found {len(img_paths)} in {self.data_dir}")
             images = [np.array(Image.open(p), dtype=np.float32) for p in img_paths]
-            bucket_images = np.stack(images, axis=0) # Shape: (C, H, W)
+            self.bucket_images = np.stack(images, axis=0) # Shape: (C, H, W)
         else:
             raise ValueError(f"Unsupported output format: {self.output_format}")
 
-
         # --- Load ground truth height map (always .npy) ---
         if not self.real_data:
-            ground_truth_path = os.path.join(sample_path, "ground_truth.npy")
-            ground_truth = np.load(ground_truth_path).astype(np.float32) # Shape: (H, W)
+            ground_truth_path = os.path.join(self.data_dir, "ground_truth.npy")
+            if not os.path.exists(ground_truth_path):
+                # For inference, ground truth might not exist, which is fine.
+                if self.real_data:
+                    self.ground_truth = None
+                else:
+                    raise FileNotFoundError(f"ground_truth.npy not found in {self.data_dir} but real_data is False.")
+            else:
+                self.ground_truth = np.load(ground_truth_path).astype(np.float32) # Shape: (H, W)
         else:
-            ground_truth = np.zeros((self.H, self.W), dtype=np.float32)
+            self.ground_truth = None
 
-        # --- Patch Extraction and Coordinate Generation ---
-        img_H, img_W = bucket_images.shape[1], bucket_images.shape[2]
-        if img_H < self.patch_size or img_W < self.patch_size:
-            raise ValueError(f"Image size ({img_H}, {img_W}) is smaller than patch size ({self.patch_size}).")
+        if self.ground_truth is None:
+            # Use placeholder if no real ground truth is available
+            img_H, img_W = self.bucket_images.shape[1:]
+            self.ground_truth = np.zeros((img_H, img_W), dtype=np.float32)
+
+
+    def __len__(self):
+        return self.epoch_length
+
+    def __getitem__(self, idx):
+        # idx is ignored, we always return a random patch.
 
         # Get random top-left corner for the patch
-        top = np.random.randint(0, img_H - self.patch_size + 1)
-        left = np.random.randint(0, img_W - self.patch_size + 1)
+        top = np.random.randint(0, self.H - self.patch_size + 1)
+        left = np.random.randint(0, self.W - self.patch_size + 1)
 
-        # Extract patches
-        bucket_patch = bucket_images[:, top:top+self.patch_size, left:left+self.patch_size]
-        gt_patch = ground_truth[top:top+self.patch_size, left:left+self.patch_size]
+        # Extract patches from in-memory arrays
+        bucket_patch = self.bucket_images[:, top:top+self.patch_size, left:left+self.patch_size]
+        gt_patch = self.ground_truth[top:top+self.patch_size, left:left+self.patch_size]
 
         # Generate coordinates for the patch, normalized to [0, 1]
-        # These coordinates correspond to the patch's position in the *full* image
         x = torch.linspace(left / self.W, (left + self.patch_size - 1) / self.W, self.patch_size)
         y = torch.linspace(top / self.H, (top + self.patch_size - 1) / self.H, self.patch_size)
         grid_y, grid_x = torch.meshgrid(y, x, indexing="ij")
-        coords = torch.stack([grid_x.flatten(), grid_y.flatten()], dim=1) # Shape: (patch_size*patch_size, 2)
+        coords = torch.stack([grid_x.flatten(), grid_y.flatten()], dim=1)
 
         # --- Reshape for model and loss ---
-        # Reshape bucket patch for comparison with model output
-        # (C, H, W) -> (C, H*W)
-        bucket_patch_flat = torch.from_numpy(bucket_patch).reshape(bucket_patch.shape[0], -1)
-
-        # Reshape ground truth patch for pre-training loss
-        # (H, W) -> (1, H*W)
+        bucket_patch_flat = torch.from_numpy(bucket_patch).reshape(self.num_channels, -1)
         gt_patch_flat = torch.from_numpy(gt_patch).reshape(1, -1)
 
         return coords, bucket_patch_flat, gt_patch_flat
