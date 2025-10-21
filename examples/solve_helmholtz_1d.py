@@ -52,23 +52,43 @@ def main():
     # --- 1. 설정 및 구성 ---
     DEVICE = get_device()
     print(f"사용 장치: {DEVICE}")
+    print("=" * 70)
+    print("1D Helmholtz 방정식 벤치마크 (논문 Table 1 재현)")
+    print("=" * 70)
 
-    # 문제 매개변수
+    # 문제 매개변수 (논문 설정)
     K_WAVENUMBER = 4 * torch.pi
     DOMAIN_MIN = [-1.0]
     DOMAIN_MAX = [1.0]
 
-    # 모델 하이퍼파라미터
-    LAYERS_DIMS = [1, 64, 64, 1]
-    CHEBY_ORDER = 4
+    # 모델 하이퍼파라미터 (논문 권장 설정)
+    LAYERS_DIMS = [1, 32, 32, 32, 1]  # 논문 권장 구조
+    CHEBY_ORDER = 3  # 논문 권장 차수
 
-    # 훈련 하이퍼파라미터
+    # 훈련 하이퍼파라미터 (논문 설정)
     N_PDE_POINTS = 1000
     N_BC_POINTS = 100
-    ADAM_EPOCHS = 2000
-    LBFGS_EPOCHS = 1 # 이 파라미터는 수정된 트레이너에서 실제로 사용되지 않음
-    ADAM_LR = 1e-3
+    ADAM_EPOCHS = 20000  # 논문 권장: 20k epochs
+    LBFGS_EPOCHS = 5     # 논문 권장: 5 L-BFGS steps
+    ADAM_LR = 1e-3       # 논문 설정
     LOSS_WEIGHTS = {'pde': 1.0, 'bc': 20.0}
+    
+    print(f"\n문제 설정:")
+    print(f"  PDE: u_xx + k²u = 0, k = {K_WAVENUMBER/torch.pi:.1f}π")
+    print(f"  도메인: [{DOMAIN_MIN[0]}, {DOMAIN_MAX[0]}]")
+    print(f"  경계 조건: u(-1) = sin(-k), u(1) = sin(k)")
+    print(f"  분석 해: u(x) = sin(kx)")
+    print(f"\n모델 구조:")
+    print(f"  아키텍처: {LAYERS_DIMS}")
+    print(f"  체비쇼프 차수: {CHEBY_ORDER}")
+    print(f"\n훈련 설정:")
+    print(f"  PDE 포인트: {N_PDE_POINTS}")
+    print(f"  경계 포인트: {N_BC_POINTS}")
+    print(f"  Adam 에포크: {ADAM_EPOCHS}")
+    print(f"  L-BFGS 에포크: {LBFGS_EPOCHS}")
+    print(f"  학습률: {ADAM_LR}")
+    print(f"  손실 가중치: {LOSS_WEIGHTS}")
+    print("=" * 70)
 
     # --- 2. 데이터 샘플러 및 포인트 생성 ---
     pde_sampler = LatinHypercubeSampler(N_PDE_POINTS, DOMAIN_MIN, DOMAIN_MAX, device=DEVICE)
@@ -99,52 +119,133 @@ def main():
     trainer = Trainer(model, loss_fn)
 
     # --- 4. 훈련 실행 ---
+    print("\n훈련 시작...")
+    import time
+    start_time = time.time()
+    
     history = trainer.train(
         pde_points=pde_points,
         bc_points_dicts=bc_points_dicts,
         adam_epochs=ADAM_EPOCHS,
         lbfgs_epochs=LBFGS_EPOCHS,
         adam_lr=ADAM_LR,
-        log_interval=500
+        log_interval=2000  # 20k epochs이므로 로그 간격 증가
     )
+    
+    training_time = time.time() - start_time
+    print(f"\n훈련 완료! 소요 시간: {training_time:.2f}초")
 
-    # --- 5. 결과 시각화 ---
+    # --- 5. 결과 평가 및 논문 비교 ---
     model.eval()
+    
+    # 정확도 평가
+    with torch.no_grad():
+        x_test = torch.linspace(DOMAIN_MIN[0], DOMAIN_MAX[0], 1000).view(-1, 1).to(DEVICE)
+        u_pred = model(x_test).cpu().numpy().flatten()
+        u_true = analytical_solution(x_test.cpu(), K_WAVENUMBER).numpy().flatten()
+        
+        # 다양한 오차 메트릭 계산
+        l2_error = np.linalg.norm(u_pred - u_true) / np.linalg.norm(u_true)
+        linf_error = np.max(np.abs(u_pred - u_true))
+        mse = np.mean((u_pred - u_true) ** 2)
+        
+    print("\n" + "=" * 70)
+    print("벤치마크 결과 (논문 Table 1과 비교)")
+    print("=" * 70)
+    print(f"Relative L2 error: {l2_error:.6e}")
+    print(f"L∞ error:          {linf_error:.6e}")
+    print(f"MSE:               {mse:.6e}")
+    print(f"Final total loss:  {history['total_loss'][-1]:.6e}")
+    print(f"Final PDE loss:    {history['loss_pde'][-1]:.6e}")
+    print(f"Final BC loss:     {history['loss_bc'][-1]:.6e}")
+    print(f"Training time:     {training_time:.2f}s")
+    print("=" * 70)
+    
+    # 목표 달성 여부 확인
+    target_error = 1e-4
+    if l2_error < target_error:
+        print(f"✓ 목표 달성! L2 error ({l2_error:.6e}) < 목표 ({target_error:.6e})")
+    else:
+        print(f"✗ 목표 미달성. L2 error ({l2_error:.6e}) >= 목표 ({target_error:.6e})")
+    print("=" * 70)
+    
+    # 논문과의 비교 정보
+    print("\n논문 Table 1 참조:")
+    print("  - 이 벤치마크는 논문의 1D Helmholtz 문제 결과와 비교할 수 있습니다.")
+    print("  - 논문에서 Scaled-cPIKAN은 L2 error < 1e-4를 달성했습니다.")
+    print("  - 실험 조건: k=4π, 도메인=[-1,1], Adam 20k + L-BFGS 5 steps")
+    print("=" * 70)
 
+    # --- 6. 결과 시각화 ---
+    # --- 6. 결과 시각화 ---
+    print("\n시각화 생성 중...")
+    
     # 손실 기록 플롯
-    plt.figure(figsize=(10, 5))
+    plt.figure(figsize=(12, 5))
+    
+    # 서브플롯 1: 손실 기록 (로그 스케일)
+    plt.subplot(1, 2, 1)
     for key in ['loss_pde', 'loss_bc', 'total_loss']:
         if key in history:
-            plt.plot(history['epoch'], history[key], label=key)
+            plt.plot(history['epoch'], history[key], label=key, linewidth=2)
     plt.yscale('log')
-    plt.xlabel('에포크')
-    plt.ylabel('손실')
-    plt.title('훈련 손실 기록')
-    plt.legend()
-    plt.grid(True, which="both", ls="--")
-    plt.savefig("helmholtz_loss_history.png")
-    print("\n손실 기록 플롯을 helmholtz_loss_history.png에 저장했습니다.")
+    plt.xlabel('에포크', fontsize=12)
+    plt.ylabel('손실', fontsize=12)
+    plt.title('훈련 손실 기록', fontsize=14)
+    plt.legend(fontsize=10)
+    plt.grid(True, which="both", ls="--", alpha=0.5)
+    
+    # 서브플롯 2: 학습률 변화 (스케줄러 사용 시)
+    plt.subplot(1, 2, 2)
+    if 'learning_rate' in history:
+        plt.plot(history['epoch'], history['learning_rate'], 'g-', linewidth=2)
+        plt.xlabel('에포크', fontsize=12)
+        plt.ylabel('학습률', fontsize=12)
+        plt.title('학습률 변화 (ExponentialLR)', fontsize=14)
+        plt.grid(True, alpha=0.5)
+    else:
+        plt.text(0.5, 0.5, 'Learning rate not tracked', 
+                ha='center', va='center', fontsize=12)
+        plt.axis('off')
+    
+    plt.tight_layout()
+    plt.savefig("helmholtz_loss_history.png", dpi=150)
+    print("  손실 기록 플롯: helmholtz_loss_history.png")
 
     # 해답 플롯
     with torch.no_grad():
         x_plot = torch.linspace(DOMAIN_MIN[0], DOMAIN_MAX[0], 500).view(-1, 1).to(DEVICE)
-        u_pred = model(x_plot).cpu().numpy()
-        u_true = analytical_solution(x_plot.cpu(), K_WAVENUMBER).numpy()
+        u_pred = model(x_plot).cpu().numpy().flatten()
+        u_true = analytical_solution(x_plot.cpu(), K_WAVENUMBER).numpy().flatten()
+        error = np.abs(u_pred - u_true)
 
-        # 상대 L2 오차 계산
-        l2_error = np.linalg.norm(u_pred - u_true) / np.linalg.norm(u_true)
-        print(f"최종 상대 L2 오차: {l2_error:.4e}")
-
-        plt.figure(figsize=(10, 6))
-        plt.plot(x_plot.cpu().numpy(), u_true, 'b-', label='분석적 해')
-        plt.plot(x_plot.cpu().numpy(), u_pred, 'r--', label=f'Scaled-cPIKAN 예측')
-        plt.title(f'1D 헬름홀츠 해 (k={K_WAVENUMBER/torch.pi:.1f}π) - L2 오차: {l2_error:.2e}')
-        plt.xlabel('x')
-        plt.ylabel('u(x)')
-        plt.legend()
-        plt.grid(True)
-        plt.savefig("helmholtz_solution.png")
-        print("해답 플롯을 helmholtz_solution.png에 저장했습니다.")
+        fig, (ax1, ax2) = plt.subplots(2, 1, figsize=(12, 10))
+        
+        # 서브플롯 1: 해 비교
+        ax1.plot(x_plot.cpu().numpy(), u_true, 'b-', label='분석적 해', linewidth=2)
+        ax1.plot(x_plot.cpu().numpy(), u_pred, 'r--', label='Scaled-cPIKAN 예측', linewidth=2)
+        ax1.set_xlabel('x', fontsize=12)
+        ax1.set_ylabel('u(x)', fontsize=12)
+        ax1.set_title(f'1D 헬름홀츠 해 (k={K_WAVENUMBER/torch.pi:.1f}π)\nRelative L2 error: {l2_error:.6e}', 
+                     fontsize=14)
+        ax1.legend(fontsize=11)
+        ax1.grid(True, alpha=0.3)
+        
+        # 서브플롯 2: 절대 오차
+        ax2.plot(x_plot.cpu().numpy(), error, 'g-', linewidth=2)
+        ax2.set_xlabel('x', fontsize=12)
+        ax2.set_ylabel('절대 오차 |u_pred - u_true|', fontsize=12)
+        ax2.set_title(f'절대 오차 분포 (최대: {linf_error:.6e})', fontsize=14)
+        ax2.set_yscale('log')
+        ax2.grid(True, which="both", ls="--", alpha=0.5)
+        
+        plt.tight_layout()
+        plt.savefig("helmholtz_solution.png", dpi=150)
+        print("  해 비교 플롯: helmholtz_solution.png")
+    
+    print("\n완료! 결과 파일:")
+    print("  - helmholtz_loss_history.png")
+    print("  - helmholtz_solution.png")
 
 if __name__ == "__main__":
     main()
