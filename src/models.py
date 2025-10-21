@@ -1,5 +1,6 @@
 import torch
 import torch.nn as nn
+import warnings
 
 class ChebyKANLayer(nn.Module):
     """
@@ -40,6 +41,19 @@ class ChebyKANLayer(nn.Module):
         batch_size, in_features = x.shape
         if in_features != self.in_features:
             raise ValueError(f"입력 특징 차원 {in_features}이 레이어의 in_features {self.in_features}와 일치하지 않습니다.")
+
+        # 입력 범위 검증 (훈련 중에만, 약간의 tolerance 허용)
+        if torch.is_grad_enabled():  # 훈련 모드에서만 체크
+            x_min, x_max = x.min().item(), x.max().item()
+            tolerance = 1e-6
+            if x_min < -1.0 - tolerance or x_max > 1.0 + tolerance:
+                warnings.warn(
+                    f"ChebyKANLayer 입력이 [-1, 1] 범위를 벗어났습니다: "
+                    f"min={x_min:.6f}, max={x_max:.6f}. "
+                    f"아핀 스케일링이 올바르게 적용되었는지 확인하세요.",
+                    UserWarning,
+                    stacklevel=2
+                )
 
         # k=0...K에 대한 체비쇼프 다항식 기저 T_k(x)를 다항식 리스트를 만들어 쌓는 방식으로 생성.
         # 이는 인플레이스(inplace) 연산을 방지합니다.

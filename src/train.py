@@ -28,6 +28,8 @@ class Trainer:
               adam_epochs=20000,
               lbfgs_epochs=10,
               adam_lr=1e-3,
+              use_scheduler=True,
+              scheduler_gamma=0.9995,
               log_interval=1000):
         """
         먼저 Adam으로, 그 다음 L-BFGS로 전체 훈련 과정을 실행합니다.
@@ -40,6 +42,8 @@ class Trainer:
             adam_epochs (int): Adam 옵티마이저의 에포크 수.
             lbfgs_epochs (int): L-BFGS 옵티마이저의 에포크/스텝 수.
             adam_lr (float): Adam 옵티마이저의 학습률.
+            use_scheduler (bool): 학습률 스케줄러 사용 여부 (논문 권장: True).
+            scheduler_gamma (float): ExponentialLR 감쇠율 (논문 권장: 0.9995).
             log_interval (int): 손실 정보를 얼마나 자주 출력할지 결정하는 간격.
 
         Returns:
@@ -51,7 +55,7 @@ class Trainer:
         )
 
         print("--- 1단계 시작: Adam 최적화 ---")
-        self._train_adam(pde_points, bc_points_dicts, ic_points_dicts, data_points, adam_epochs, adam_lr, log_interval)
+        self._train_adam(pde_points, bc_points_dicts, ic_points_dicts, data_points, adam_epochs, adam_lr, use_scheduler, scheduler_gamma, log_interval)
 
         if lbfgs_epochs > 0:
             print("\n--- 2단계 시작: L-BFGS 최적화 ---")
@@ -60,8 +64,13 @@ class Trainer:
         print("\n--- 훈련 종료 ---")
         return self.history
 
-    def _train_adam(self, pde_points, bc_points_dicts, ic_points_dicts, data_points, epochs, lr, log_interval):
+    def _train_adam(self, pde_points, bc_points_dicts, ic_points_dicts, data_points, epochs, lr, use_scheduler, scheduler_gamma, log_interval):
         optimizer = torch.optim.Adam(self.model.parameters(), lr=lr)
+        
+        # 논문 권장: ExponentialLR 스케줄러 (gamma=0.9995)
+        scheduler = None
+        if use_scheduler:
+            scheduler = torch.optim.lr_scheduler.ExponentialLR(optimizer, gamma=scheduler_gamma)
 
         for epoch in range(epochs):
             self.model.train()
@@ -71,11 +80,22 @@ class Trainer:
 
             total_loss.backward()
             optimizer.step()
+            
+            # 학습률 스케줄러 업데이트
+            if scheduler is not None:
+                scheduler.step()
 
             self._log_history(loss_dict, epoch, "Adam")
+            
+            # 학습률도 기록
+            if use_scheduler:
+                self.history['learning_rate'].append(optimizer.param_groups[0]['lr'])
 
             if (epoch + 1) % log_interval == 0 or epoch == epochs - 1:
                 self._print_log(epoch, epochs, loss_dict, "Adam")
+                if use_scheduler:
+                    current_lr = optimizer.param_groups[0]['lr']
+                    print(f"    Current LR: {current_lr:.6e}")
 
     def _train_lbfgs(self, pde_points, bc_points_dicts, ic_points_dicts, data_points, epochs, log_interval):
         optimizer = torch.optim.LBFGS(

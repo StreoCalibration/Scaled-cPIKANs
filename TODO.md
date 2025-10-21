@@ -17,7 +17,7 @@
 
 ## P0: 핵심 알고리즘 수정 (Critical)
 
-### 1. 학습률 스케줄러 추가
+### 1. 학습률 스케줄러 추가 ✅
 - **파일**: `src/train.py`
 - **작업**: Trainer 클래스에 ExponentialLR 스케줄러 추가
 - **논문 설정**: `gamma=0.9995`
@@ -27,11 +27,12 @@
   scheduler = torch.optim.lr_scheduler.ExponentialLR(optimizer, gamma=0.9995)
   # 각 에포크 후 scheduler.step() 호출
   ```
-- **검증**: Adam 훈련 중 학습률이 지수적으로 감소하는지 확인
+- **검증**: Adam 훈련 중 학습률이 지수적으로 감소하는지 확인 ✅
+- **테스트**: `tests/test_p0_implementation.py::TestLearningRateScheduler`
 - **예상 소요**: 1시간
-- **상태**: [ ] 미완료
+- **상태**: [x] 완료
 
-### 2. 입력 범위 검증 추가
+### 2. 입력 범위 검증 추가 ✅
 - **파일**: `src/models.py` - `ChebyKANLayer.forward()`
 - **작업**: 입력이 [-1, 1] 범위를 벗어나면 경고 또는 오류 발생
 - **수정 내용**:
@@ -42,9 +43,10 @@
           if not torch.all((x >= -1.0 - 1e-6) & (x <= 1.0 + 1e-6)):
               warnings.warn(f"Input to ChebyKANLayer outside [-1,1]: min={x.min():.6f}, max={x.max():.6f}")
   ```
-- **검증**: 스케일링 없이 모델 실행 시 경고 발생 확인
+- **검증**: 스케일링 없이 모델 실행 시 경고 발생 확인 ✅
+- **테스트**: `tests/test_p0_implementation.py::TestInputRangeValidation`
 - **예상 소요**: 30분
-- **상태**: [ ] 미완료
+- **상태**: [x] 완료
 
 ### 3. 하이퍼파라미터 통일
 - **파일**: 모든 `examples/*.py`
@@ -250,18 +252,21 @@
 ### 완료된 작업
 - [x] 구현 명세서 작성 (`doc/Scaled-cPIKAN 구현 명세서.md`)
 - [x] 불필요한 파일 삭제 (reconstruction/ 정리)
+- [x] 학습률 스케줄러 추가 (P0-1)
+- [x] 입력 범위 검증 추가 (P0-2)
+- [x] P0 작업 테스트 작성 (14개 테스트)
 
 ### 진행 중
 - [ ] P0 작업 (3개 항목)
 - [ ] P1 작업 (4개 항목)
 
 ### 전체 진행률
-- **P0 (Critical)**: 0/3 (0%)
+- **P0 (Critical)**: 2/3 (67%) - 학습률 스케줄러 ✅, 입력 검증 ✅, 하이퍼파라미터 통일 ⏳
 - **P1 (High)**: 0/4 (0%)
 - **P2 (Medium)**: 1/7 (14%)
 - **P3 (Low)**: 0/3 (0%)
 
-**전체**: 1/17 (6%)
+**전체**: 3/17 (18%)
 
 ---
 
