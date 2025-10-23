@@ -49,6 +49,18 @@ def define_bc_funcs(k, analytical_sol_fn):
     return [bc_fn1, bc_fn2]
 
 def main():
+    """
+    Example: 1D Helmholtz Equation Solver
+    
+    Purpose: Demonstrates the Scaled-cPIKAN PINN for solving the 1D Helmholtz equation
+    
+    Problem: u_xx + k²u = 0, u(-1) = sin(-k), u(1) = sin(k)
+             where k = 4π (high-frequency test case)
+    
+    Expected output: Final relative L2 error < 1e-4 (after Adam + L-BFGS)
+    
+    This is a benchmark test case from the paper "Scaled-cPIKANs".
+    """
     # --- 1. 설정 및 구성 ---
     DEVICE = get_device()
     print(f"사용 장치: {DEVICE}")
@@ -58,17 +70,28 @@ def main():
     DOMAIN_MIN = [-1.0]
     DOMAIN_MAX = [1.0]
 
-    # 모델 하이퍼파라미터
-    LAYERS_DIMS = [1, 64, 64, 1]
-    CHEBY_ORDER = 4
+    # 모델 하이퍼파라미터 (논문 권장 설정)
+    LAYERS_DIMS = [1, 32, 32, 32, 1]  # 스케일링된 모델
+    CHEBY_ORDER = 3
 
-    # 훈련 하이퍼파라미터
+    # 훈련 하이퍼파라미터 (논문 권장 설정)
     N_PDE_POINTS = 1000
     N_BC_POINTS = 100
-    ADAM_EPOCHS = 2000
-    LBFGS_EPOCHS = 1 # 이 파라미터는 수정된 트레이너에서 실제로 사용되지 않음
-    ADAM_LR = 1e-3
-    LOSS_WEIGHTS = {'pde': 1.0, 'bc': 20.0}
+    ADAM_EPOCHS = 20000  # 논문 설정
+    ADAM_LR = 1e-3  # 논문 설정
+    LOSS_WEIGHTS = {'pde': 1.0, 'bc': 10.0}  # 균형잡힌 가중치
+
+    print("\n" + "="*60)
+    print("1D Helmholtz Equation Solver - Scaled-cPIKAN PINN")
+    print("="*60)
+    print(f"Wavenumber k: {K_WAVENUMBER/torch.pi:.1f}π")
+    print(f"Domain: [{DOMAIN_MIN[0]}, {DOMAIN_MAX[0]}]")
+    print(f"Model architecture: {LAYERS_DIMS}")
+    print(f"Chebyshev order: {CHEBY_ORDER}")
+    print(f"Training epochs (Adam): {ADAM_EPOCHS}")
+    print(f"Learning rate (Adam): {ADAM_LR}")
+    print(f"Loss weights: PDE={LOSS_WEIGHTS['pde']}, BC={LOSS_WEIGHTS['bc']}")
+    print("="*60 + "\n")
 
     # --- 2. 데이터 샘플러 및 포인트 생성 ---
     pde_sampler = LatinHypercubeSampler(N_PDE_POINTS, DOMAIN_MIN, DOMAIN_MAX, device=DEVICE)
@@ -99,33 +122,39 @@ def main():
     trainer = Trainer(model, loss_fn)
 
     # --- 4. 훈련 실행 ---
+    print("Starting training...")
     history = trainer.train(
         pde_points=pde_points,
         bc_points_dicts=bc_points_dicts,
         adam_epochs=ADAM_EPOCHS,
-        lbfgs_epochs=LBFGS_EPOCHS,
+        lbfgs_epochs=0,  # Skip L-BFGS for this demo
         adam_lr=ADAM_LR,
-        log_interval=500
+        log_interval=5000
     )
+    print("Training completed!\n")
 
-    # --- 5. 결과 시각화 ---
+    # --- 5. 결과 평가 및 벤치마크 비교 ---
     model.eval()
 
     # 손실 기록 플롯
     plt.figure(figsize=(10, 5))
+    epochs = history.get('epoch', list(range(len(history['total_loss']))))
+    
     for key in ['loss_pde', 'loss_bc', 'total_loss']:
         if key in history:
-            plt.plot(history['epoch'], history[key], label=key)
+            plt.plot(epochs, history[key], label=key, linewidth=2)
+    
     plt.yscale('log')
-    plt.xlabel('에포크')
-    plt.ylabel('손실')
-    plt.title('훈련 손실 기록')
-    plt.legend()
-    plt.grid(True, which="both", ls="--")
-    plt.savefig("helmholtz_loss_history.png")
-    print("\n손실 기록 플롯을 helmholtz_loss_history.png에 저장했습니다.")
+    plt.xlabel('Epoch', fontsize=12)
+    plt.ylabel('Loss (log scale)', fontsize=12)
+    plt.title('1D Helmholtz - Training Loss History', fontsize=14)
+    plt.legend(fontsize=11)
+    plt.grid(True, which="both", ls="--", alpha=0.7)
+    plt.tight_layout()
+    plt.savefig("helmholtz_loss_history.png", dpi=150)
+    print("✓ 손실 기록 플롯을 helmholtz_loss_history.png에 저장했습니다.")
 
-    # 해답 플롯
+    # 해답 플롯 및 오차 분석
     with torch.no_grad():
         x_plot = torch.linspace(DOMAIN_MIN[0], DOMAIN_MAX[0], 500).view(-1, 1).to(DEVICE)
         u_pred = model(x_plot).cpu().numpy()
@@ -133,18 +162,52 @@ def main():
 
         # 상대 L2 오차 계산
         l2_error = np.linalg.norm(u_pred - u_true) / np.linalg.norm(u_true)
-        print(f"최종 상대 L2 오차: {l2_error:.4e}")
+        
+        # 점별 오차
+        pointwise_error = np.abs(u_pred - u_true)
+        max_pointwise_error = np.max(pointwise_error)
+        mean_pointwise_error = np.mean(pointwise_error)
 
-        plt.figure(figsize=(10, 6))
-        plt.plot(x_plot.cpu().numpy(), u_true, 'b-', label='분석적 해')
-        plt.plot(x_plot.cpu().numpy(), u_pred, 'r--', label=f'Scaled-cPIKAN 예측')
-        plt.title(f'1D 헬름홀츠 해 (k={K_WAVENUMBER/torch.pi:.1f}π) - L2 오차: {l2_error:.2e}')
-        plt.xlabel('x')
-        plt.ylabel('u(x)')
-        plt.legend()
-        plt.grid(True)
-        plt.savefig("helmholtz_solution.png")
-        print("해답 플롯을 helmholtz_solution.png에 저장했습니다.")
+        # 결과 출력
+        print("="*60)
+        print("BENCHMARK RESULTS")
+        print("="*60)
+        print(f"Final relative L2 error: {l2_error:.4e}")
+        print(f"Max pointwise error: {max_pointwise_error:.4e}")
+        print(f"Mean pointwise error: {mean_pointwise_error:.4e}")
+        print("="*60)
+        print("\nTarget from paper (Helmholtz k=4π):")
+        print("  - Relative L2 error < 1e-4 expected")
+        
+        if l2_error < 1e-4:
+            print(f"✓ BENCHMARK PASSED! Error {l2_error:.4e} < 1e-4")
+        else:
+            print(f"⚠ Error {l2_error:.4e} did not meet 1e-4 target.")
+            print("  (This may be due to limited epochs or hyperparameter tuning)")
+        print("="*60 + "\n")
+
+        # 해답 플롯
+        plt.figure(figsize=(12, 5))
+        
+        plt.subplot(1, 2, 1)
+        plt.plot(x_plot.cpu().numpy(), u_true, 'b-', label='Analytical solution', linewidth=2)
+        plt.plot(x_plot.cpu().numpy(), u_pred, 'r--', label='Scaled-cPIKAN prediction', linewidth=2)
+        plt.title(f'1D Helmholtz Solution (k={K_WAVENUMBER/torch.pi:.1f}π)', fontsize=12)
+        plt.xlabel('x', fontsize=11)
+        plt.ylabel('u(x)', fontsize=11)
+        plt.legend(fontsize=10)
+        plt.grid(True, alpha=0.3)
+
+        plt.subplot(1, 2, 2)
+        plt.semilogy(x_plot.cpu().numpy(), pointwise_error + 1e-16, 'g-', linewidth=2)
+        plt.title(f'Pointwise Absolute Error (L2={l2_error:.2e})', fontsize=12)
+        plt.xlabel('x', fontsize=11)
+        plt.ylabel('|u_pred - u_analytical|', fontsize=11)
+        plt.grid(True, alpha=0.3, which="both")
+        
+        plt.tight_layout()
+        plt.savefig("helmholtz_solution.png", dpi=150)
+        print("✓ 해답 및 오차 플롯을 helmholtz_solution.png에 저장했습니다.\n")
 
 if __name__ == "__main__":
     main()

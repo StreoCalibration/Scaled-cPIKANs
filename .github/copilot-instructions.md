@@ -66,5 +66,25 @@ project architecture, key workflows, code patterns, and precise commands.
   - If changing training behavior (optimizers, schedulers, epoch counts),
     update `examples` and README snippets.
 
+- MCP (Model Context Protocol) Tool Usage Rules
+  - **Always use sequentialthinking** for all responses:
+    - Before answering ANY question, use `mcp_sequentialthi_sequentialthinking` to break down the problem
+    - Use sequential thinking to analyze code changes, design decisions, and complex tasks
+    - Mark thoughts as revisions or branches when reconsidering approaches
+    - Complete the thinking process before implementing or responding
+  - **Always use Context7 for resource research**:
+    - Before suggesting library usage, use `mcp_context7_resolve-library-id` to identify the correct library
+    - For library documentation, always use `mcp_context7_get-library-docs` to fetch up-to-date docs
+    - Never rely on outdated or assumed library APIs; fetch current documentation
+    - Use Context7 for PyTorch, NumPy, and any external dependencies
+  - **When performing code modifications**:
+    - Apply sequentialthinking to plan the changes
+    - Use Context7 to verify API correctness for external libraries
+    - Run unit tests after edits: `python -m unittest discover tests`
+  - **When investigating issues**:
+    - Use sequentialthinking to systematically trace through the problem
+    - Use Context7 to verify library behavior or API specifics
+    - Document the investigation chain in comments if complex
+
 If anything above is unclear or you need a deeper section (e.g. model internals
 or loss math), tell me which file or function and I'll expand the instruction.
