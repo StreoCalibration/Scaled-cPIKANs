@@ -1,17 +1,55 @@
 """
 Example: 3D Height Reconstruction from Bucket Images using a Scaled-cPIKAN PINN.
 
-This script demonstrates how to solve a physics-informed inverse problem
-using the Scaled-cPIKAN model. The goal is to reconstruct a 3D height map, h(x, y),
-from a set of raw "bucket" intensity images from four different laser wavelengths.
+Purpose:
+    This example demonstrates how to solve a physics-informed inverse problem
+    using the Scaled-cPIKAN model. The goal is to reconstruct a 3D height map,
+    h(x, y), from raw "bucket" intensity images from four different laser wavelengths.
+    This approach is more direct and realistic than using pre-calculated phase maps.
 
-This approach is more direct than using pre-calculated wrapped phase maps.
+Problem Description:
+    Given: Raw bucket intensity images Iⱼ(x,y,δⱼ) for j=1..4 lasers and k=0..2 phases
+    Find: Height map h(x, y) that produces the observed intensities
+    Constraint: Surface smoothness
 
-The physics-informed loss function enforces two main constraints:
-1.  Data Fidelity: The reconstructed height h(x, y), when used to simulate
-    the intensity images, must match the observed bucket images.
-2.  Smoothness Prior: The reconstructed surface is assumed to be smooth. This is
-    enforced by penalizing the Laplacian of the height map.
+Physics:
+    The physics-informed loss enforces two main constraints:
+    1. Data Fidelity: The reconstructed height, when used to simulate intensity
+       images, must match the observed bucket images. Forward model:
+       Iⱼ,ₖ(x,y) = A + B·cos(4π·h(x,y)·λⱼ⁻¹ + δₖ)
+    2. Smoothness Prior: The reconstructed surface is assumed smooth, enforced
+       by penalizing the Laplacian: ∇²h
+
+Usage:
+    python examples/solve_reconstruction_from_buckets.py [options]
+
+Options:
+    --num-lasers N          Number of lasers (default: 4)
+    --num-buckets N         Bucket images per laser (default: 3)
+    --wavelengths W1 W2...  Laser wavelengths in μm (default: 5.0 5.5 6.05 6.655)
+    --grid-size N           Grid size NxN (default: 128)
+    --adam-epochs N         Adam training epochs (default: 5000)
+    --lbfgs-steps N         L-BFGS fine-tuning steps (default: 1)
+
+Expected Output:
+    - Console: Training progress, final RMSE error
+    - Directory: reconstruction_from_buckets_results/
+        * Input bucket images (if saved)
+        * Reconstructed height map
+        * Loss history plots
+
+Performance:
+    Training Time: ~15-30 minutes on GPU
+    Expected RMSE: < 0.3
+
+Hyperparameters:
+    - Chebyshev order: 3
+    - Adam learning rate: 1e-3 (with 0.9995 exponential decay)
+    - Loss weights: data_weight=1.0, smoothness_weight=1e-7
+    - Grid: 128×128 spatial points
+
+References:
+    Direct 3D reconstruction from raw bucket intensity measurements
 """
 
 import argparse
@@ -31,7 +69,7 @@ if project_root not in sys.path:
 from collections import defaultdict
 from PIL import Image
 from src.models import Scaled_cPIKAN
-from reconstruction.data_generator import DEFAULT_WAVELENGTHS
+from src.data_generator import DEFAULT_WAVELENGTHS
 
 def main():
     """Main function to set up and run the 3D reconstruction from buckets experiment."""

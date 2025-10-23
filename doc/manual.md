@@ -100,7 +100,62 @@
 
 스크립트를 실행하면 터미널에 훈련 진행 상황을 보여주는 출력이 나타납니다. 먼저 사용 중인 장치(CPU 또는 CUDA)가 표시됩니다. 그런 다음 Adam 및 L-BFGS 최적화 단계 모두에 대해 일정한 간격으로 손실 값을 기록합니다. 마지막으로 모델 예측의 최종 상대 L2 오차를 출력합니다.
 
-출력은 다음과 유사합니다:
+#### 하이퍼파라미터 설정 가이드
+
+훈련 중 학습 동작을 조정하기 위한 주요 하이퍼파라미터:
+
+1.  **학습률 (Learning Rate)**
+    - **초기값**: 1e-3 (0.001) - 일반적인 Adam 훈련 초기 학습률
+    - **감쇠 (Decay)**: Adam 훈련 중 `ExponentialLR` 스케줄러가 자동 적용됨
+    - **감쇠 계수 (gamma)**: 0.9995 - 매 에포크마다 학습률이 0.9995배로 감소
+    - **효과**: 에포크가 진행될수록 학습률이 지수적으로 감소하여 훈련 안정성 향상
+
+    ```python
+    # Trainer에서 자동으로 적용됨
+    scheduler = torch.optim.lr_scheduler.ExponentialLR(optimizer, gamma=0.9995)
+    scheduler.step()  # 각 에포크마다 호출
+    ```
+
+2.  **네트워크 구조 (Network Architecture)**
+    - `layers_dims`: 레이어 크기 지정
+      - 1D 문제: `[1, 32, 32, 32, 1]`
+      - 2D 문제: `[2, 32, 32, 32, 1]`
+      - 높은 정확도 필요 시: `[2, 64, 64, 64, 1]` 또는 더 깊은 네트워크
+    - `cheby_order`: Chebyshev 다항식 차수 (기본값: 3)
+      - 낮은 값 (1-2): 단순한 함수에 적합, 빠른 훈련
+      - 높은 값 (4-5): 복잡한 함수에 적합, 느린 훈련
+
+3.  **에포크 (Epochs)**
+    - `adam_epochs`: Adam 사전 훈련 에포크 (기본값: 20000)
+      - 간단한 문제: 1000-5000
+      - 복잡한 문제: 10000-50000
+    - `lbfgs_steps`: L-BFGS 미세 조정 단계 (기본값: 5)
+      - 1-3 단계: 빠른 미세 조정
+      - 5-10 단계: 세밀한 최적화
+
+4.  **손실 가중치 (Loss Weights)**
+    - `pde_weight`: PDE 잔차 손실 가중치 (기본값: 1.0)
+    - `bc_weight`: 경계 조건 손실 가중치 (기본값: 1.0)
+    - `smoothness_weight`: 평활도 손실 가중치 (기본값: 1e-7)
+
+#### 출력 예시
+
+```
+Using device: cuda
+--- Starting Stage 1: Adam Optimization ---
+[Adam] Epoch [500/2000] - loss_pde: 1.2345e-02 - loss_bc: 6.7890e-03 - total_loss: 2.5923e-02
+...
+[Adam] Epoch [2000/2000] - loss_pde: 1.0000e-04 - loss_bc: 2.0000e-05 - total_loss: 1.4000e-04
+
+--- Starting Stage 2: L-BFGS Optimization ---
+[L-BFGS] Epoch [1/1] - loss_pde: 9.8765e-06 - loss_bc: 4.3210e-07 - total_loss: 1.8379e-05
+
+--- Training Finished ---
+
+Saved loss history plot to helmholtz_loss_history.png
+Final Relative L2 Error: 1.2345e-04
+Saved solution plot to helmholtz_solution.png
+```
 ```
 Using device: cuda
 --- Starting Stage 1: Adam Optimization ---

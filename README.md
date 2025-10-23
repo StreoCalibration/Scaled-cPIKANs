@@ -34,20 +34,120 @@
 -   `doc/`: 상세 문서가 포함된 디렉토리입니다.
     -   `Technical Design Document...`: 알고리즘과 구현 설계에 대한 심층 설명서입니다.
     -   `manual.md`: 프로젝트 설정 및 실행 방법을 안내하는 사용자 매뉴얼입니다.
+    -   `TODO.md`: 프로젝트 진행 상황 및 작업 추적 문서입니다.
 -   `src/`: Scaled-cPIKAN 모델과 트레이너의 핵심 소스 코드입니다.
     -   `models.py`: `ChebyKANLayer`와 메인 `Scaled_cPIKAN` 네트워크 아키텍처를 정의합니다.
-    -   `loss.py`: 일반적인 `PhysicsInformedLoss` 클래스를 포함합니다.
-    -   `data.py`: `LatinHypercubeSampler`를 포함한 데이터 샘플링 유틸리티를 제공합니다.
+    -   `loss.py`: `PhysicsInformedLoss` 및 `PinnReconstructionLoss` 클래스를 포함합니다.
+    -   `data.py`: `LatinHypercubeSampler`, `PinnPatchDataset`, `WaferPatchDataset` 등의 데이터 샘플링 유틸리티를 제공합니다.
+    -   `data_generator.py`: 3D 복원 문제용 합성 데이터 생성 모듈입니다.
     -   `train.py`: Adam + L-BFGS 최적화 루프를 처리하는 `Trainer` 클래스를 구현합니다.
 -   `examples/`: 라이브러리 사용법을 보여주는 스크립트가 포함되어 있습니다.
-    -   `solve_helmholtz_1d.py`: 1D 헬름홀츠 방정식을 푸는 완전한 예제. 데이터 생성부터 훈련, 시각화까지 포함합니다.
-    -   `generate_bucket_data.py`: 버킷 강도 이미지와 위상 지도를 생성하는 유틸리티.
-    -   `train_bucket_pinn.py`: 생성된 버킷 데이터를 사용하여 Scaled-cPIKAN PINN을 학습합니다.
-    -   `infer_bucket_pinn.py`: 학습된 모델을 로드하여 높이 지도를 추론합니다.
-    -   `bucket` 기반 워크플로우를 위한 예제 스크립트가 아래 절에 설명되어 있습니다.
+    -   `solve_helmholtz_1d.py`: 1D 헬름홀츠 방정식을 푸는 완전한 예제입니다 (벤치마크).
+    -   `solve_reconstruction_pinn.py`: 3D 높이 복원 PINN 예제입니다 (위상 기반).
+    -   `solve_reconstruction_from_buckets.py`: 버킷 이미지로부터 3D 높이 복원 PINN 예제입니다.
+    -   `run_pipeline.py`: 전체 파이프라인 (데이터 생성 → 훈련 → 평가)을 통합합니다.
 -   `tests/`: 코드의 정확성을 보장하기 위한 단위 및 통합 테스트입니다.
--   `helmholtz_*.png`: 예제 스크립트에 의해 생성된 출력 이미지 예시입니다.
+    -   `test_models.py`: Chebyshev 다항식, 아핀 스케일링, 모델 구조 검증.
+    -   `test_data.py`: 데이터 샘플러 및 생성 로직 검증.
+    -   `test_integration.py`: Poisson 방정식 등 PDE 해결 테스트.
+    -   `test_p0_implementation.py`: P0 구현 요구사항 (학습률 스케줄러, 입력 범위 검증) 테스트.
+    -   `test_unet_pipeline.py`: UNet 파이프라인 통합 테스트.
+-   `reconstruction/`: 3D 복원용 데이터 생성 및 시뮬레이션 코드 (레거시 위치, 현재 `src/data_generator.py`로 이동됨).
+
+## 예제 실행 방법
+
+### 1. 헬름홀츠 벤치마크 (1D PDE 테스트)
+
+```bash
+python examples/solve_helmholtz_1d.py
+```
+
+**결과**: 1D 헬름홀츠 방정식 해결, 분석 해와 비교, 손실 및 오차 그래프 생성.
+
+**예상 성능**: Relative L2 error < 1e-4 (논문과 일치)
+
+### 2. 3D 높이 복원 (위상 데이터 기반)
+
+```bash
+python examples/solve_reconstruction_pinn.py
+```
+
+**설명**: 위상 맵을 입력으로 높이를 복원하는 PINN.
+
+### 3. 3D 높이 복원 (버킷 이미지 기반)
+
+```bash
+python examples/solve_reconstruction_from_buckets.py
+```
+
+**설명**: 원시 버킷 이미지로부터 높이를 직접 복원하는 PINN.
+
+### 4. 전체 파이프라인
+
+```bash
+python examples/run_pipeline.py
+```
+
+**단계**:
+1. 합성 데이터 생성 (훈련용)
+2. 선택적: 실제 데이터 로드
+3. 모델 사전 훈련 (Adam)
+4. 모델 미세 조정 (L-BFGS)
+5. 평가 및 결과 저장
+
+**옵션**:
+```bash
+python examples/run_pipeline.py --help
+```
+
+## 주요 하이퍼파라미터
+
+다음은 권장되는 기본값입니다 (논문 설정과 일치):
+
+| 파라미터 | 기본값 | 설명 |
+|---------|-------|------|
+| `layers_dims` | `[2, 32, 32, 32, 1]` (2D) | 네트워크 레이어 구조 |
+| `cheby_order` | 3 | Chebyshev 다항식 차수 |
+| `adam_epochs` | 20000 | Adam 훈련 에포크 |
+| `adam_lr` | 1e-3 | Adam 초기 학습률 |
+| `lr_gamma` | 0.9995 | 학습률 감쇠 (ExponentialLR) |
+| `lbfgs_steps` | 5 | L-BFGS 미세 조정 단계 |
+
+### 학습률 스케줄러
+
+Adam 훈련 중에 `ExponentialLR` 스케줄러가 자동으로 적용됩니다:
+
+```python
+scheduler = torch.optim.lr_scheduler.ExponentialLR(optimizer, gamma=0.9995)
+```
+
+이를 통해 학습률이 에포크마다 지수적으로 감소하여 훈련 안정성을 향상시킵니다.
+
+## 테스트 실행
+
+전체 테스트 스위트 실행:
+
+```bash
+python -m unittest discover tests -v
+```
+
+특정 테스트만 실행:
+
+```bash
+python -m unittest tests.test_models.TestChebyshevBasis -v
+python -m unittest tests.test_integration.TestIntegration.test_poisson_equation_1d -v
+python -m unittest tests.test_p0_implementation -v
+```
+
+### 진행 상황
+
+- **P0 (Critical)**: 2/3 완료 (학습률 스케줄러 ✅, 입력 범위 검증 ✅)
+- **P1 (High)**: 4/4 완료 ✅
+- **P2 (Medium)**: 진행 중
+- **P3 (Low)**: 향후 계획
+
+자세한 작업 추적은 `doc/TODO.md`를 참조하세요.
 
 ### 버킷 기반 3D 복원 워크플로우
 
-`generate_bucket_data.py`는 기본적으로 4개의 레이저와 각 레이저당 3개의 버킷 영상을 생성하여 총 12장의 이미지를 구성합니다. `--num-lasers`, `--num-buckets`, `--wavelengths` 인자를 통해 레이저와 버킷 수를 자유롭게 조절할 수 있습니다. 데이터 생성 후에는 `train_bucket_pinn.py`로 모델을 학습하고, `infer_bucket_pinn.py`로 높이 지도를 복원할 수 있습니다.
+`src/data_generator.py`는 기본적으로 4개의 레이저와 각 레이저당 3개의 버킷 영상을 생성하여 총 12장의 이미지를 구성합니다. 다양한 예제에서 이를 사용하여 3D 높이 복원 작업을 수행할 수 있습니다.

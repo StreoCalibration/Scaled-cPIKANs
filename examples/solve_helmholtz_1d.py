@@ -1,3 +1,42 @@
+"""
+Example: 1D Helmholtz Equation Solver using Scaled-cPIKAN.
+
+Purpose: 
+    This example demonstrates solving a benchmark 1D wave equation (Helmholtz)
+    using the Scaled-cPIKAN PINN architecture. It showcases the two-stage
+    optimization strategy (Adam pre-training followed by L-BFGS fine-tuning)
+    and validates the model against analytical solutions.
+
+Problem Description:
+    Solve: u_xx + k²u = 0, with u(0) = 0, u(1) = sin(k)
+    Analytical solution: u(x) = sin(kx)
+    k = 4π (wave number)
+
+Usage:
+    python examples/solve_helmholtz_1d.py
+
+Expected Output:
+    - Console: Training progress, loss values, final relative L2 error
+    - Files generated:
+        * helmholtz_loss_history.png: Loss curves over epochs
+        * helmholtz_solution.png: Model solution vs analytical solution
+
+Performance:
+    Expected Relative L2 Error: < 1e-4 (matches paper results)
+    Training Time: ~2-5 minutes on GPU, ~10-20 minutes on CPU
+
+Hyperparameters:
+    - Network: [1, 32, 32, 32, 1]
+    - Chebyshev order: 3
+    - Adam epochs: 20000
+    - Adam learning rate: 1e-3 (with 0.9995 exponential decay)
+    - L-BFGS steps: 5
+
+References:
+    Paper: "Scaled-cPIKANs: Domain Scaling in Chebyshev-based Physics-informed KANs"
+    Benchmark test case for evaluating PINN architecture performance
+"""
+
 import torch
 import numpy as np
 import matplotlib.pyplot as plt

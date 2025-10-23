@@ -1,3 +1,74 @@
+"""
+Example: Full Pipeline for 3D Wafer Reconstruction using Scaled-cPIKAN.
+
+Purpose:
+    This script demonstrates a complete machine learning pipeline for 3D surface
+    reconstruction using the Scaled-cPIKAN PINN architecture. It includes:
+    1. Synthetic data generation for pre-training
+    2. Pre-training with UNet/supervised learning
+    3. Fine-tuning with physics-informed losses on real or synthetic data
+    4. Final model evaluation and result visualization
+
+Workflow:
+    Stage 1 (Pre-training):
+        - Generate synthetic bucket images with ground truth height maps
+        - Train model on patches using supervised reconstruction loss
+        
+    Stage 2 (Fine-tuning):
+        - Load user-provided real data OR generate additional synthetic data
+        - Fine-tune model using physics-informed loss (smoothness prior)
+        - No ground truth required (unsupervised optimization)
+
+Usage:
+    # Basic usage with default parameters
+    python examples/run_pipeline.py
+    
+    # Pre-train only (generate data, skip fine-tuning)
+    python examples/run_pipeline.py --pretrain-epochs 50 --finetune-epochs 0
+    
+    # Generate synthetic fine-tuning data
+    python examples/run_pipeline.py --generate-finetune-data --num-finetune-samples 10
+    
+    # Full configuration
+    python examples/run_pipeline.py \\
+        --pretrain-data-dir synthetic_data/train \\
+        --finetune-data-dir real_data/train \\
+        --pretrain-epochs 50 \\
+        --finetune-epochs 30 \\
+        --patch-size 128
+
+Expected Output:
+    - Console: Progress bars for data generation and training
+    - Directory structure:
+        * synthetic_data/train/: Pre-training data (sample_*/bucket_*.bmp + ground_truth.npy)
+        * real_data/train/: Fine-tuning data (optional, user-provided)
+        * models/pinn_final.pth: Final trained model weights
+
+Performance:
+    Typical training time with 10 pre-train samples and 5 finetune samples:
+    - Pre-training: 5-10 minutes on GPU
+    - Fine-tuning: 2-5 minutes on GPU
+    - Total: ~10-15 minutes (CPU: 30-60 minutes)
+
+Hyperparameters:
+    - Patch size: 64 (adjust for GPU memory constraints)
+    - Pre-train learning rate: 1e-3
+    - Fine-tune learning rate: 1e-5
+    - Network: [3, 64, 64, 64, 1] for UNet-based approach
+    - Smoothness weight: 1e-7
+
+Input Data Format:
+    For real data, organize in: real_data/train/
+    ├── sample_0000/
+    │   ├── bucket_00.bmp through bucket_11.bmp (for 4 lasers, 3 buckets each)
+    │   ├── (optional) ground_truth.npy
+    │   └── (optional) wavelengths.txt
+    └── sample_0001/...
+
+References:
+    Full pipeline implementation for reproducible 3D reconstruction results
+"""
+
 import argparse
 import os
 import sys
@@ -12,8 +83,6 @@ from PIL import Image
 from src.data import PinnPatchDataset
 from src.models import Scaled_cPIKAN
 from src.loss import PinnReconstructionLoss
-
-# --- Data Generation Logic ---
 
 def generate_spherical_bump(grid_x, grid_y, center_x, center_y, diameter, height):
     radius = diameter / 2

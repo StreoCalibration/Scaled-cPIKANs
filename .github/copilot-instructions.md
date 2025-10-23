@@ -66,25 +66,30 @@ project architecture, key workflows, code patterns, and precise commands.
   - If changing training behavior (optimizers, schedulers, epoch counts),
     update `examples` and README snippets.
 
-- MCP (Model Context Protocol) Tool Usage Rules
-  - **Always use sequentialthinking** for all responses:
-    - Before answering ANY question, use `mcp_sequentialthi_sequentialthinking` to break down the problem
-    - Use sequential thinking to analyze code changes, design decisions, and complex tasks
-    - Mark thoughts as revisions or branches when reconsidering approaches
-    - Complete the thinking process before implementing or responding
-  - **Always use Context7 for resource research**:
-    - Before suggesting library usage, use `mcp_context7_resolve-library-id` to identify the correct library
-    - For library documentation, always use `mcp_context7_get-library-docs` to fetch up-to-date docs
-    - Never rely on outdated or assumed library APIs; fetch current documentation
-    - Use Context7 for PyTorch, NumPy, and any external dependencies
-  - **When performing code modifications**:
-    - Apply sequentialthinking to plan the changes
-    - Use Context7 to verify API correctness for external libraries
-    - Run unit tests after edits: `python -m unittest discover tests`
-  - **When investigating issues**:
-    - Use sequentialthinking to systematically trace through the problem
-    - Use Context7 to verify library behavior or API specifics
-    - Document the investigation chain in comments if complex
+- MCP (Model Context Protocol) Tool Usage
+
+  - **Sequential Thinking**: 모든 복잡한 작업 전에 `mcp_sequentialthi_sequentialthinking` 사용
+  
+  - **Context7 Usage**: 코드 수정 전 반드시 라이브러리 문서 확인
+    
+    | 파일 | 필수 확인 API | 라이브러리 |
+    |------|-------------|-----------|
+    | `src/models.py` | `torch.autograd.grad`, `torch.einsum` | PyTorch |
+    | `src/loss.py` | `torch.autograd.grad` (create_graph=True) | PyTorch |
+    | `src/train.py` | `torch.optim.Adam`, `torch.optim.LBFGS`, `ExponentialLR` | PyTorch |
+    | `src/data.py` | `scipy.stats.qmc.LatinHypercube`, `PIL.Image` | SciPy, Pillow |
+    | `src/data_generator.py` | NumPy broadcasting, `PIL.Image` | NumPy, Pillow |
+    
+    **워크플로**:
+    ```
+    1. 파일 수정 필요 → 위 표에서 라이브러리 확인
+    2. mcp_context7_resolve-library-id("라이브러리명")
+    3. mcp_context7_get-library-docs(libraryID, query="API명")
+    4. 문서 확인 후 코드 작성
+    5. python -m unittest discover tests
+    ```
+    
+    **필수 쿼리 목록**: `.github/CONTEXT7_QUERIES.md` 참조
 
 If anything above is unclear or you need a deeper section (e.g. model internals
 or loss math), tell me which file or function and I'll expand the instruction.

@@ -1,19 +1,49 @@
 """
 Example: 3D Height Reconstruction using a Scaled-cPIKAN PINN.
 
-This script demonstrates how to solve a physics-informed inverse problem
-using the Scaled-cPIKAN model. The goal is to reconstruct a 3D height map, h(x, y),
-from a set of four wrapped phase measurements, each from a different laser wavelength.
+Purpose:
+    This example demonstrates how to solve a physics-informed inverse problem
+    using the Scaled-cPIKAN model. The goal is to reconstruct a 3D height map,
+    h(x, y), from a set of four wrapped phase measurements from different laser
+    wavelengths. This is representative of multi-wavelength phase-shifting
+    profilometry.
 
-This problem is representative of multi-wavelength phase-shifting profilometry.
+Problem Description:
+    Given: Four wrapped phase maps φ₁, φ₂, φ₃, φ₄ (each from different wavelength)
+    Find: Height map h(x, y) that produces the observed phase
+    Constraint: Surface smoothness (Laplacian penalty)
 
-The physics-informed loss function enforces two main constraints:
-1.  Data Fidelity: The reconstructed height h(x, y) must be consistent with the
-    four observed wrapped phase maps. This is enforced using a differentiable
-    cos/sin loss formulation.
-2.  Smoothness Prior: The reconstructed surface is assumed to be smooth. This is
-    enforced by penalizing the Laplacian of the height map, encouraging a
-    physically plausible solution.
+Physics:
+    The physics-informed loss enforces two main constraints:
+    1. Data Fidelity: The reconstructed height h(x, y) must be consistent with
+       the four observed wrapped phase maps via: φᵢ = 4π·h(x,y) / λᵢ (mod 2π)
+    2. Smoothness Prior: The reconstructed surface is assumed smooth, enforced
+       by penalizing the Laplacian: ∇²h
+
+Usage:
+    python examples/solve_reconstruction_pinn.py
+
+Expected Output:
+    - Console: Synthetic data generation, training progress, final RMSE
+    - Directory: reconstruction_pinn_results/
+        * 01_input_data.png: Input phase maps
+        * 02_reconstruction_results.png: Predicted vs ground truth height
+        * 03_loss_history.png: Training loss curves
+
+Performance:
+    Training Time: ~10-20 minutes on GPU, longer on CPU
+    Expected RMSE: < 0.2 (depending on problem complexity)
+
+Hyperparameters:
+    - Grid size: 128×128
+    - Chebyshev order: 3
+    - Adam epochs: 5000
+    - L-BFGS steps: 1
+    - Loss weights: pde_weight=1.0, smoothness_weight=1e-7
+    - Wavelengths: [5.0, 5.5, 6.05, 6.655] μm
+
+References:
+    3D surface reconstruction using multi-wavelength phase-shifting profilometry
 """
 
 import torch
@@ -33,7 +63,7 @@ from collections import defaultdict
 from src.models import Scaled_cPIKAN
 # from src.train import Trainer # Not using the generic trainer for this problem
 # from src.loss import PhysicsInformedLoss # Not using the generic loss for this problem
-from reconstruction.data_generator import DEFAULT_WAVELENGTHS, generate_synthetic_data
+from src.data_generator import DEFAULT_WAVELENGTHS, generate_synthetic_data
 
 def main():
     """
