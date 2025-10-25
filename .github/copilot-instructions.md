@@ -62,6 +62,16 @@ AI 코딩 에이전트가 즉시 생산적으로 작업할 수 있도록 지원.
     공개 함수 시그니처 유지.
   - 훈련 동작 변경 시(최적화기, 스케줄러, 에포크 수), 
     `examples` 및 README 스니펫 업데이트.
+  - **구현 문서 동기화 규칙 (필수)**:
+    - 새로운 클래스/함수 추가 시: `doc/implementation/` 폴더의 관련 문서 업데이트
+    - 기존 클래스/메서드 수정 시: 시그니처 변경이면 해당 구현 문서 반영
+    - 주요 변경 사항:
+      - 새 모델/레이어 → `class_diagram_implementation.md`의 models.py 섹션 업데이트
+      - 새 손실 함수 → `class_diagram_implementation.md`의 loss.py 섹션 업데이트
+      - 새 데이터셋/샘플러 → `class_diagram_implementation.md`의 data.py 섹션 업데이트
+      - 새 훈련 전략 → `class_diagram_implementation.md`의 train.py 섹션 업데이트
+    - 관련 문서가 없으면 새 문서 생성 고려 (예: 새 모듈 추가 시)
+    - 최소 업데이트 항목: 클래스/함수명, 주요 파라미터, 반환 타입, 핵심 동작 설명
 
 ---
 
@@ -212,6 +222,97 @@ AI: [3단계] 문서 기반 정확한 einsum 시그니처 수정
 작업 완료 후:
 - [ ] 테스트 실행: `python -m unittest discover tests`
 - [ ] 결과 검증 완료?
+- [ ] 구현 문서 업데이트 완료? (코드 변경 시 `doc/implementation/` 반드시 확인)
+
+---
+
+## 구현 문서 관리 규칙 (Implementation Documentation)
+
+**원칙**: 코드와 문서의 일관성 유지는 프로젝트 품질의 핵심입니다.
+
+### 필수 업데이트 시나리오
+
+1. **새 클래스/함수 추가**
+   - 위치: `doc/implementation/class_diagram_implementation.md`
+   - 업데이트 내용:
+     - 해당 모듈 섹션에 클래스 다이어그램 추가/수정
+     - 메서드 시그니처, 파라미터, 반환 타입 명시
+     - 주요 동작 및 사용 예시 설명
+   - 예시: `ChebyKANLayer` 추가 → models.py 섹션 업데이트
+
+2. **기존 API 변경**
+   - 시그니처 변경 (파라미터 추가/제거/타입 변경)
+   - 반환 타입 변경
+   - 동작 로직의 중대한 변경
+   - → 해당 클래스/함수의 문서 섹션 즉시 업데이트
+
+3. **새 모듈 추가**
+   - `src/` 아래 새 .py 파일 생성 시
+   - → `doc/implementation/`에 새 문서 생성 고려
+   - 또는 `class_diagram_implementation.md`에 새 섹션 추가
+
+4. **아키텍처 변경**
+   - 모듈 간 의존성 변경
+   - 데이터 흐름 변경
+   - → 전체 시스템 아키텍처 다이어그램 업데이트
+
+### 문서별 담당 영역
+
+| 문서 | 담당 코드 | 업데이트 트리거 |
+|------|----------|----------------|
+| `class_diagram_implementation.md` | `src/models.py`, `src/loss.py`, `src/data.py`, `src/train.py`, `src/data_generator.py` | 클래스/메서드 추가/수정/삭제 |
+| (향후) `api_reference.md` | 모든 공개 API | 함수 시그니처 변경 |
+| (향후) `architecture_design.md` | 시스템 전체 | 모듈 구조 변경, 새 디자인 패턴 도입 |
+
+### 업데이트 체크리스트
+
+코드 변경 후 반드시 확인:
+```
+□ 새 클래스 추가? → class_diagram_implementation.md 업데이트
+□ 메서드 시그니처 변경? → 해당 클래스 섹션 수정
+□ 새 손실 함수? → loss.py 섹션 + 사용 예시 추가
+□ 새 데이터셋? → data.py 섹션 + 입출력 형태 명시
+□ 훈련 로직 변경? → train.py 섹션 + 시퀀스 다이어그램 확인
+□ Mermaid 다이어그램 깨짐? → 문법 검증 및 수정
+```
+
+### 문서 작성 가이드라인
+
+- **한글 우선**: 설명은 한글, 코드/클래스명은 영문 유지
+- **간결성**: 핵심 정보만 (장황한 설명 지양)
+- **예시 포함**: 사용법이 명확하지 않은 API는 짧은 코드 예시 추가
+- **Mermaid 다이어그램**: 클래스 관계는 시각화로 표현
+- **버전 관리**: 문서 상단에 최종 업데이트 날짜 기록
+
+### 예시: 새 클래스 추가 시
+
+**코드 변경**:
+```python
+# src/models.py
+class NewKANLayer(nn.Module):
+    def __init__(self, in_features, out_features, order=3):
+        """새로운 KAN 레이어 구현"""
+        ...
+```
+
+**필수 문서 업데이트**:
+```markdown
+# doc/implementation/class_diagram_implementation.md
+
+### NewKANLayer
+
+**목적**: [간단한 설명]
+
+**주요 메서드**:
+- `__init__(in_features, out_features, order=3)`: [설명]
+- `forward(x)`: [설명]
+
+**사용 예시**:
+\```python
+layer = NewKANLayer(10, 20, order=4)
+output = layer(input_tensor)
+\```
+```
 
 ---
 
