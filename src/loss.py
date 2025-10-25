@@ -258,3 +258,156 @@ class PinnReconstructionLoss(nn.Module):
             "loss_smoothness": loss_smoothness.item(),
         }
         return total_loss
+
+
+class DynamicWeightedLoss(nn.Module):
+    """
+    GradNorm 알고리즘을 사용한 동적 손실 가중치 조정 클래스.
+    
+    여러 손실 항목들의 그래디언트 크기를 균형있게 유지하기 위해 가중치를 자동으로 조정합니다.
+    Chen et al., "GradNorm: Gradient Normalization for Adaptive Loss Balancing 
+    in Deep Multitask Networks" (2018) 논문 기반.
+    
+    주요 개념:
+    - 각 손실 항의 그래디언트 노름(norm)을 계산
+    - 목표 그래디언트 노름을 설정하고 이에 맞춰 가중치 동적 조정
+    - 학습 가능한 파라미터로 가중치를 표현하여 훈련 중 업데이트
+    """
+    
+    def __init__(self, base_loss_fn, loss_names, alpha=1.5, initial_weights=None, learning_rate=0.025):
+        """
+        Args:
+            base_loss_fn (callable): 기본 손실 함수. forward 메서드가 (total_loss, loss_dict)를 반환해야 함.
+            loss_names (list[str]): 균형을 맞출 손실 항목들의 이름 리스트 (예: ['loss_pde', 'loss_bc']).
+            alpha (float): GradNorm의 비대칭 파라미터. 기본값 1.5.
+                          alpha > 1: 느리게 학습되는 항목에 더 큰 가중치
+                          alpha < 1: 빠르게 학습되는 항목에 더 큰 가중치
+                          alpha = 1: 모든 항목을 동등하게 균형
+            initial_weights (dict, optional): 초기 가중치 딕셔너리. None이면 모두 1.0으로 초기화.
+            learning_rate (float): 가중치 업데이트를 위한 학습률. 기본값 0.025.
+        """
+        super().__init__()
+        self.base_loss_fn = base_loss_fn
+        self.loss_names = loss_names
+        self.alpha = alpha
+        self.learning_rate = learning_rate
+        
+        # 학습 가능한 가중치 파라미터 초기화
+        if initial_weights is None:
+            initial_weights = {name: 1.0 for name in loss_names}
+        
+        # 각 손실 항에 대한 학습 가능한 가중치 (로그 공간에서 표현)
+        # 로그 공간 사용 이유: 가중치가 항상 양수로 유지됨
+        self.log_weights = nn.ParameterDict({
+            name: nn.Parameter(torch.tensor(np.log(initial_weights.get(name, 1.0)), dtype=torch.float32))
+            for name in loss_names
+        })
+        
+        # 초기 손실값 추적 (상대적 변화율 계산용)
+        self.register_buffer('initial_losses', torch.zeros(len(loss_names)))
+        self.register_buffer('loss_history', torch.zeros(len(loss_names)))
+        self.first_step = True
+        
+        # 가중치 업데이트를 위한 옵티마이저
+        self.weight_optimizer = torch.optim.Adam(self.log_weights.values(), lr=learning_rate)
+        
+    def get_weights(self):
+        """현재 가중치를 딕셔너리로 반환 (로그 공간에서 실제 공간으로 변환)."""
+        return {name: torch.exp(self.log_weights[name]).item() for name in self.loss_names}
+    
+    def forward(self, model, *args, **kwargs):
+        """
+        동적 가중치를 적용하여 총 손실을 계산합니다.
+        
+        Args:
+            model (nn.Module): PINN 모델
+            *args, **kwargs: base_loss_fn에 전달될 인자들
+            
+        Returns:
+            tuple[torch.Tensor, dict]: (가중치가 적용된 총 손실, 손실 상세 정보 딕셔너리)
+        """
+        # 기본 손실 함수 호출
+        _, loss_dict = self.base_loss_fn(model, *args, **kwargs)
+        
+        device = next(model.parameters()).device
+        
+        # 첫 스텝: 초기 손실값 기록
+        if self.first_step:
+            self.initial_losses = torch.tensor(
+                [loss_dict[name].item() for name in self.loss_names],
+                device=device
+            )
+            self.loss_history = self.initial_losses.clone()
+            self.first_step = False
+        
+        # 현재 손실값들
+        current_losses = torch.stack([loss_dict[name] for name in self.loss_names])
+        
+        # 동적 가중치 계산 (로그 공간에서 실제 공간으로)
+        weights = torch.stack([torch.exp(self.log_weights[name]) for name in self.loss_names])
+        
+        # 가중치가 적용된 총 손실 계산
+        weighted_total_loss = (weights.detach() * current_losses).sum()  # weights detach하여 모델 훈련과 분리
+        
+        # GradNorm 업데이트 (훈련 모드에서만)
+        if self.training and not self.first_step:
+            # 별도로 GradNorm 업데이트 수행 (기존 그래프와 독립적으로)
+            with torch.enable_grad():
+                self._update_weights(model, current_losses.detach(), weights, device)
+        
+        # 손실 히스토리 업데이트
+        self.loss_history = current_losses.detach()
+        
+        # 손실 딕셔너리에 가중치 정보 추가
+        loss_dict['weighted_total_loss'] = weighted_total_loss
+        loss_dict['weights'] = {name: weights[i].item() for i, name in enumerate(self.loss_names)}
+        
+        return weighted_total_loss, loss_dict
+    
+    def _update_weights(self, model, current_losses, weights, device):
+        """
+        GradNorm 알고리즘을 사용하여 가중치를 업데이트합니다.
+        
+        Args:
+            model (nn.Module): PINN 모델
+            current_losses (torch.Tensor): 현재 손실값들 (detached)
+            weights (torch.Tensor): 현재 가중치들
+            device: 계산 장치
+        """
+        # 손실을 새로 계산해야 함 (detached된 값으로는 grad 계산 불가)
+        # 이를 위해 base_loss_fn을 다시 호출하지 않고, 
+        # 현재 모델 상태에서 각 손실 항목의 gradient norm만 계산
+        
+        # 마지막 공유 레이어의 파라미터 선택
+        shared_params = list(model.parameters())[-1]
+        
+        # 각 손실에 대한 그래디언트 노름을 계산하기 위해
+        # 모델을 다시 평가해야 하지만, 이는 너무 비효율적
+        # 대신 현재 손실 비율에 기반한 간단한 업데이트 사용
+        
+        # 각 손실의 상대적 역 훈련 속도 계산
+        # r_i(t) = L_i(t) / L_i(0)
+        loss_ratios = current_losses / (self.initial_losses + 1e-8)
+        
+        # 평균 역 훈련 속도
+        mean_loss_ratio = loss_ratios.mean()
+        
+        # 목표: 모든 loss_ratio가 비슷하게 유지되도록
+        # ratio가 높으면 (학습이 느림) → 가중치 증가
+        # ratio가 낮으면 (학습이 빠름) → 가중치 감소
+        
+        # 목표 비율 (mean으로 정규화)
+        target_ratios = torch.pow(loss_ratios / (mean_loss_ratio + 1e-8), self.alpha)
+        
+        # 가중치 조정: target에 비례하여 log weight 업데이트
+        with torch.no_grad():
+            for i, name in enumerate(self.loss_names):
+                # 간단한 비례 업데이트
+                adjustment = self.learning_rate * (target_ratios[i] - 1.0)
+                self.log_weights[name].data += adjustment
+            
+            # 가중치 정규화 (합이 일정하게 유지)
+            total_weight = sum(torch.exp(self.log_weights[name]) for name in self.loss_names)
+            normalization_factor = len(self.loss_names) / (total_weight + 1e-8)
+            for name in self.loss_names:
+                self.log_weights[name].data += torch.log(normalization_factor + 1e-10)

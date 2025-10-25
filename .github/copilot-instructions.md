@@ -63,46 +63,159 @@ AI 코딩 에이전트가 즉시 생산적으로 작업할 수 있도록 지원.
   - 훈련 동작 변경 시(최적화기, 스케줄러, 에포크 수), 
     `examples` 및 README 스니펫 업데이트.
 
-- MCP (Model Context Protocol) Tool Usage
+---
 
-  - **Sequential Thinking**: 모든 복잡한 작업 전에 `mcp_sequentialthi_sequentialthinking` 사용
-  
-  - **Context7 Usage**: 코드 **분석, 수정, 새로 작성** 시 반드시 라이브러리 문서 확인
-    
-    **필수 사용 시점**:
-    1. 기존 코드 분석 및 이해 시
-    2. 코드 수정 또는 리팩토링 시
-    3. 새로운 코드 작성 시
-    4. API 사용법이 불확실할 때
-    5. 에러 디버깅 시
-    
-    | 파일/작업 | 필수 확인 API | 라이브러리 |
-    |---------|-------------|-----------|
-    | `src/models.py` | `torch.autograd.grad`, `torch.einsum`, `nn.Module` | PyTorch |
-    | `src/loss.py` | `torch.autograd.grad` (create_graph=True) | PyTorch |
-    | `src/train.py` | `torch.optim.Adam`, `torch.optim.LBFGS`, `ExponentialLR` | PyTorch |
-    | `src/data.py` | `scipy.stats.qmc.LatinHypercube`, `PIL.Image` | SciPy, Pillow |
-    | `src/data_generator.py` | NumPy broadcasting, `PIL.Image` | NumPy, Pillow |
-    | 새 모델 작성 | `nn.Module`, `nn.Parameter`, forward 패턴 | PyTorch |
-    | 새 손실 함수 | `torch.autograd.grad`, 그래디언트 계산 | PyTorch |
-    | 데이터 로더 작성 | `Dataset`, `DataLoader`, 샘플링 | PyTorch, SciPy |
-    
-    **워크플로 (코드 작업 전 필수)**:
-    ```
-    1. 작업 유형 파악 (분석/수정/새로작성)
-    2. 위 표에서 관련 라이브러리 확인
-    3. mcp_context7_resolve-library-id("라이브러리명")
-    4. mcp_context7_get-library-docs(libraryID, query="API명 또는 패턴")
-    5. 문서 확인 후 코드 분석/작성/수정
-    6. python -m unittest discover tests
-    ```
-    
-    **예시**:
-    - 새 PINN 모델 작성 → PyTorch 문서에서 `nn.Module`, `nn.Parameter`, `forward` 패턴 확인
-    - 손실 함수 수정 → PyTorch 문서에서 `torch.autograd.grad` 옵션 확인
-    - 코드 분석 → 사용된 API의 정확한 동작 방식 확인
-    
-    **필수 쿼리 목록**: `.github/CONTEXT7_QUERIES.md` 참조
+## MCP (Model Context Protocol) Tool Usage — 필수 워크플로우
+
+**⚠️ 최우선 규칙: 모든 사용자 질문/요청에 대해 다음 순서를 반드시 따를 것**
+
+### 🔴 사용자 질문 접수 시 필수 단계 (MANDATORY)
+
+**단계 1: Sequential Thinking (항상 첫 번째)**
+- 사용자 질문을 받으면 **즉시** `mcp_sequentialthi_sequentialthinking` 도구를 사용하여:
+  1. 문제를 분석하고 이해
+  2. 필요한 단계들을 계획
+  3. 작업 범위와 복잡도 파악
+  4. 최종 해결 방안 도출
+- **예외 없음**: 단순 질문이라도 반드시 사용하여 문제를 구조화할 것
+
+**단계 2: Context7 Documentation (코드 관련 시)**
+- Sequential Thinking 결과, 코드 분석/수정/작성이 필요하면:
+  1. `mcp_context7_resolve-library-id("라이브러리명")` 실행
+  2. `mcp_context7_get-library-docs(libraryID, query="구체적 API/패턴")` 실행
+  3. 문서 확인 후 정확한 API 사용법 파악
+- **작업 전 문서 확인 필수**: 추측이나 기억에 의존하지 말 것
+
+**단계 3: 실제 작업 수행**
+- 위 두 단계 완료 후에만 실제 코드 작업/파일 편집 시작
+
+### 📋 상세 워크플로우
+
+```
+[사용자 질문] 
+    ↓
+[필수 1단계] mcp_sequentialthi_sequentialthinking
+    ├─ 문제 분석 및 분해
+    ├─ 작업 계획 수립
+    ├─ 필요 리소스 파악
+    └─ 해결 방안 검증
+    ↓
+[질문 유형 판단]
+    ├─ 코드 관련? → [필수 2단계] Context7
+    │   ├─ mcp_context7_resolve-library-id
+    │   ├─ mcp_context7_get-library-docs
+    │   └─ API 문서 확인
+    └─ 일반 질문? → 바로 답변
+    ↓
+[실제 작업 수행]
+    ├─ 파일 읽기/편집
+    ├─ 코드 작성/수정
+    ├─ 테스트 실행
+    └─ 결과 확인
+```
+
+### 🎯 Sequential Thinking 필수 사용 케이스
+
+- ✅ **항상 사용**: 모든 사용자 요청 (단순/복잡 무관)
+- ✅ 다단계 작업 계획
+- ✅ 문제 해결 및 디버깅
+- ✅ 코드 분석 및 설계
+- ✅ 새 기능 구현
+- ✅ 리팩토링 계획
+- ✅ 에러 진단
+- ✅ 테스트 전략 수립
+
+### 🎯 Context7 필수 사용 케이스
+
+**코드 작업 시 항상 사용**:
+1. ✅ 기존 코드 분석 및 이해
+2. ✅ 코드 수정 또는 리팩토링
+3. ✅ 새로운 코드/함수/클래스 작성
+4. ✅ API 사용법 확인
+5. ✅ 에러 디버깅 및 수정
+6. ✅ 라이브러리 함수 동작 확인
+7. ✅ 최적화 및 성능 개선
+
+### 📚 프로젝트별 Context7 필수 확인 API
+
+| 파일/작업 | 필수 확인 API | 라이브러리 |
+|---------|-------------|-----------|
+| `src/models.py` | `torch.autograd.grad`, `torch.einsum`, `nn.Module` | PyTorch |
+| `src/loss.py` | `torch.autograd.grad` (create_graph=True) | PyTorch |
+| `src/train.py` | `torch.optim.Adam`, `torch.optim.LBFGS`, `ExponentialLR` | PyTorch |
+| `src/data.py` | `scipy.stats.qmc.LatinHypercube`, `PIL.Image` | SciPy, Pillow |
+| `src/data_generator.py` | NumPy broadcasting, `PIL.Image` | NumPy, Pillow |
+| 새 모델 작성 | `nn.Module`, `nn.Parameter`, forward 패턴 | PyTorch |
+| 새 손실 함수 | `torch.autograd.grad`, 그래디언트 계산 | PyTorch |
+| 데이터 로더 작성 | `Dataset`, `DataLoader`, 샘플링 | PyTorch, SciPy |
+
+### 💡 실전 예시
+
+**예시 1: 새 PINN 모델 작성 요청**
+```
+사용자: "새로운 PINN 모델을 만들어줘"
+  ↓
+AI: [1단계] mcp_sequentialthi_sequentialthinking
+      - 문제: PINN 모델 구조 설계 필요
+      - 계획: nn.Module 상속, forward 구현, 물리 손실 정의
+      - 필요: PyTorch 문서 확인
+  ↓
+AI: [2단계] mcp_context7_resolve-library-id("PyTorch")
+     mcp_context7_get-library-docs(libraryID, "nn.Module forward backward")
+  ↓
+AI: [3단계] 문서 기반으로 정확한 코드 작성
+```
+
+**예시 2: 기존 코드 수정 요청**
+```
+사용자: "src/loss.py의 그래디언트 계산 수정해줘"
+  ↓
+AI: [1단계] mcp_sequentialthi_sequentialthinking
+      - 현재 문제 파악
+      - 수정 범위 결정
+      - 영향도 분석
+  ↓
+AI: [2단계] mcp_context7_get-library-docs("/pytorch/pytorch", "torch.autograd.grad create_graph")
+  ↓
+AI: [3단계] 문서 확인 후 정확한 파라미터로 수정
+```
+
+**예시 3: 에러 디버깅 요청**
+```
+사용자: "einsum 에러가 나는데 고쳐줘"
+  ↓
+AI: [1단계] mcp_sequentialthi_sequentialthinking
+      - 에러 원인 분석
+      - 텐서 shape 추적
+      - 해결 방안 도출
+  ↓
+AI: [2단계] mcp_context7_get-library-docs("/pytorch/pytorch", "torch.einsum shape broadcasting")
+  ↓
+AI: [3단계] 문서 기반 정확한 einsum 시그니처 수정
+```
+
+### ⚠️ 금지 사항
+
+- ❌ Sequential Thinking 없이 바로 코드 작성
+- ❌ API 문서 확인 없이 추측으로 코드 수정
+- ❌ 복잡한 작업을 단계 분해 없이 진행
+- ❌ 라이브러리 함수 동작을 기억에만 의존
+
+### ✅ 올바른 작업 흐름 체크리스트
+
+모든 작업 시작 전:
+- [ ] Sequential Thinking으로 문제 분석 완료?
+- [ ] 코드 관련이면 Context7로 문서 확인 완료?
+- [ ] 계획이 명확하고 실행 가능?
+- [ ] API 사용법이 정확히 파악됨?
+
+작업 완료 후:
+- [ ] 테스트 실행: `python -m unittest discover tests`
+- [ ] 결과 검증 완료?
+
+---
+
+**참고**: 상세 쿼리 목록은 `.github/CONTEXT7_QUERIES.md` 참조 (있는 경우)
 
 If anything above is unclear or you need a deeper section (e.g. model internals
 or loss math), tell me which file or function and I'll expand the instruction.

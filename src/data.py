@@ -74,6 +74,189 @@ class LatinHypercubeSampler:
         return samples
 
 
+class AdaptiveResidualSampler:
+    """
+    잔차 기반 적응형 콜로케이션 포인트 샘플러.
+    
+    PDE 잔차가 큰 영역에 더 많은 샘플링 포인트를 배치하여
+    훈련 효율성을 향상시킵니다. 이는 "adaptive collocation" 또는
+    "residual-based sampling" 기법으로 알려져 있습니다.
+    
+    작동 원리:
+    1. 초기 샘플 포인트 세트 생성 (Latin Hypercube Sampling)
+    2. 모델의 PDE 잔차를 각 포인트에서 계산
+    3. 잔차가 큰 영역 주변에 새로운 포인트 추가
+    4. 주기적으로 반복하여 샘플 분포 개선
+    
+    Args:
+        n_initial_points (int): 초기 샘플 포인트 수
+        n_max_points (int): 최대 샘플 포인트 수
+        domain_min (list[float]): 각 차원의 도메인 최솟값
+        domain_max (list[float]): 각 차원의 도메인 최댓값
+        refinement_ratio (float): 각 반복에서 추가할 포인트 비율 (0~1)
+        residual_threshold_percentile (float): 잔차 임계값 백분위수 (0~100)
+        dtype (torch.dtype): 출력 텐서 데이터 타입
+        device (torch.device): 출력 텐서 장치
+    """
+    
+    def __init__(
+        self,
+        n_initial_points: int,
+        n_max_points: int,
+        domain_min: list[float],
+        domain_max: list[float],
+        refinement_ratio: float = 0.2,
+        residual_threshold_percentile: float = 75.0,
+        dtype: torch.dtype = torch.float32,
+        device: torch.device = 'cpu'
+    ):
+        self.n_initial_points = n_initial_points
+        self.n_max_points = n_max_points
+        self.domain_min = torch.tensor(domain_min, dtype=dtype, device=device)
+        self.domain_max = torch.tensor(domain_max, dtype=dtype, device=device)
+        self.refinement_ratio = refinement_ratio
+        self.residual_threshold_percentile = residual_threshold_percentile
+        self.dtype = dtype
+        self.device = device
+        self.dimensions = len(domain_min)
+        
+        # 초기 샘플 생성
+        self.lhs_sampler = LatinHypercubeSampler(
+            n_points=n_initial_points,
+            domain_min=domain_min,
+            domain_max=domain_max,
+            dtype=dtype,
+            device=device
+        )
+        
+        # 현재 샘플 포인트
+        self.current_points = self.lhs_sampler.sample()
+        self.residuals = None
+    
+    def get_current_points(self) -> torch.Tensor:
+        """
+        현재 샘플 포인트를 반환합니다.
+        
+        Returns:
+            torch.Tensor: (n_points, d) 형태의 샘플 포인트
+        """
+        return self.current_points
+    
+    def update_residuals(self, residuals: torch.Tensor):
+        """
+        각 포인트에서의 PDE 잔차를 업데이트합니다.
+        
+        Args:
+            residuals (torch.Tensor): (n_points, *) 형태의 잔차 텐서
+                                     각 포인트에서의 PDE 잔차 값
+        """
+        # 잔차의 절대값 또는 노름 계산
+        if residuals.ndim > 1:
+            # 다차원 잔차인 경우 L2 노름 사용
+            self.residuals = torch.norm(residuals, dim=tuple(range(1, residuals.ndim)), keepdim=False)
+        else:
+            self.residuals = torch.abs(residuals)
+    
+    def refine(self) -> bool:
+        """
+        잔차가 큰 영역에 새로운 포인트를 추가합니다.
+        
+        Returns:
+            bool: 정제가 수행되었으면 True, 최대 포인트 수에 도달했으면 False
+        """
+        if self.residuals is None:
+            raise ValueError("update_residuals()를 먼저 호출하여 잔차를 설정해야 합니다.")
+        
+        n_current = self.current_points.shape[0]
+        
+        # 최대 포인트 수에 도달했는지 확인
+        if n_current >= self.n_max_points:
+            return False
+        
+        # 추가할 포인트 수 계산
+        n_to_add = min(
+            int(n_current * self.refinement_ratio),
+            self.n_max_points - n_current
+        )
+        
+        if n_to_add == 0:
+            return False
+        
+        # 잔차 임계값 계산
+        residual_threshold = torch.quantile(
+            self.residuals,
+            self.residual_threshold_percentile / 100.0
+        )
+        
+        # 높은 잔차를 가진 포인트 선택
+        high_residual_mask = self.residuals >= residual_threshold
+        high_residual_points = self.current_points[high_residual_mask]
+        
+        if len(high_residual_points) == 0:
+            # 모든 잔차가 비슷한 경우, 임의로 포인트 추가
+            new_points = self._sample_random_points(n_to_add)
+        else:
+            # 높은 잔차 포인트 주변에 새 포인트 생성
+            new_points = self._sample_around_points(high_residual_points, n_to_add)
+        
+        # 새 포인트 추가
+        self.current_points = torch.cat([self.current_points, new_points], dim=0)
+        
+        # 잔차 초기화 (다음 업데이트까지)
+        self.residuals = None
+        
+        return True
+    
+    def _sample_random_points(self, n_points: int) -> torch.Tensor:
+        """
+        도메인 내에서 임의 포인트를 샘플링합니다.
+        
+        Args:
+            n_points (int): 샘플링할 포인트 수
+            
+        Returns:
+            torch.Tensor: (n_points, d) 형태의 새 포인트
+        """
+        # 균일 분포 샘플링
+        random_samples = torch.rand(n_points, self.dimensions, dtype=self.dtype, device=self.device)
+        scaled_samples = self.domain_min + random_samples * (self.domain_max - self.domain_min)
+        return scaled_samples
+    
+    def _sample_around_points(self, center_points: torch.Tensor, n_points: int) -> torch.Tensor:
+        """
+        주어진 포인트 주변에 새 포인트를 샘플링합니다.
+        
+        Args:
+            center_points (torch.Tensor): (n_centers, d) 형태의 중심 포인트
+            n_points (int): 샘플링할 포인트 수
+            
+        Returns:
+            torch.Tensor: (n_points, d) 형태의 새 포인트
+        """
+        # 각 중심 포인트 주변에 가우시안 노이즈 추가
+        n_centers = center_points.shape[0]
+        
+        # 중심 포인트를 순환적으로 선택
+        selected_centers = center_points[torch.randint(0, n_centers, (n_points,))]
+        
+        # 도메인 크기의 일정 비율만큼의 표준편차로 가우시안 노이즈 추가
+        domain_range = self.domain_max - self.domain_min
+        noise_std = 0.1 * domain_range  # 도메인 범위의 10%
+        
+        noise = torch.randn(n_points, self.dimensions, dtype=self.dtype, device=self.device) * noise_std
+        new_points = selected_centers + noise
+        
+        # 도메인 경계 내로 클리핑
+        new_points = torch.clamp(new_points, self.domain_min, self.domain_max)
+        
+        return new_points
+    
+    def reset(self):
+        """샘플러를 초기 상태로 리셋합니다."""
+        self.current_points = self.lhs_sampler.sample()
+        self.residuals = None
+
+
 import os
 import numpy as np
 from torch.utils.data import Dataset
