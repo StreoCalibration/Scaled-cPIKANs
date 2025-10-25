@@ -10,7 +10,7 @@ DEFAULT_WAVELENGTHS = [5.0, 5.5, 6.05, 6.655]
 def generate_synthetic_data(
     shape=(128, 128),
     wavelengths=None,
-    num_buckets=3,
+    num_buckets=4,
     save_path="reconstruction_data",
     output_format='bmp'
 ):

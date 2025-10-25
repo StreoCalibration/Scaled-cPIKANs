@@ -222,9 +222,9 @@ class OutConv(nn.Module):
 class UNet(nn.Module):
     """
     A standard U-Net architecture for image-to-image translation tasks.
-    The model takes a (N, 12, H, W) tensor and outputs a (N, 1, H, W) tensor.
+    The model takes a (N, 16, H, W) tensor and outputs a (N, 1, H, W) tensor.
     """
-    def __init__(self, n_channels=12, n_classes=1, bilinear=True):
+    def __init__(self, n_channels=16, n_classes=1, bilinear=True):
         super(UNet, self).__init__()
         self.n_channels = n_channels
         self.n_classes = n_classes

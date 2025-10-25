@@ -36,6 +36,7 @@ reconstruction_from_buckets_results/
 synthetic_data/
 real_data/
 models/
+outputs/
 
 # Generated images
 helmholtz_*.png

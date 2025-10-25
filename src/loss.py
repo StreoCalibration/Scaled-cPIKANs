@@ -133,8 +133,8 @@ class UNetPhysicsLoss(nn.Module):
         Args:
             predicted_height (torch.Tensor): The height map output from the U-Net.
                                              Shape: (N, 1, H, W)
-            input_buckets (torch.Tensor): The original 12 bucket images that were
-                                          input to the U-Net. Shape: (N, 12, H, W)
+            input_buckets (torch.Tensor): The original 16 bucket images that were
+                                          input to the U-Net. Shape: (N, 16, H, W)
 
         Returns:
             torch.Tensor: The total computed loss.

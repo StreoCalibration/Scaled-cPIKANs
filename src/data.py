@@ -272,7 +272,7 @@ class WaferPatchDataset(Dataset):
     from bucket images and an optional ground truth height map. It supports
     on-the-fly patch extraction and data augmentation.
     """
-    def __init__(self, data_dir: str, patch_size: int, use_augmentation: bool = False, real_data: bool = False, num_channels: int = 12, output_format: str = 'bmp'):
+    def __init__(self, data_dir: str, patch_size: int, use_augmentation: bool = False, real_data: bool = False, num_channels: int = 16, output_format: str = 'bmp'):
         """
         Args:
             data_dir (str): Path to the directory containing the data samples.
@@ -376,7 +376,7 @@ class PinnPatchDataset(Dataset):
     """
     def __init__(self, data_dir: str, patch_size: int,
                  output_format: str = 'npy', real_data: bool = False,
-                 num_channels: int = 12, epoch_length: int = 1000):
+                 num_channels: int = 16, epoch_length: int = 1000):
         """
         Args:
             data_dir (str): Path to the directory containing the data files
