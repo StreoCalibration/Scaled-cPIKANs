@@ -835,7 +835,214 @@ class NewLoss(nn.Module):
 
 ---
 
-**문서 버전**: 1.0  
-**최종 업데이트**: 2025-10-25  
+## src/utils/tiling.py 함수 및 유틸리티
+
+### 📦 v2-P1: 슬라이딩 윈도우 추론 모듈
+
+**목적**: 9344×7000급 초대형 이미지를 메모리 효율적으로 처리하기 위한 타일 기반 추론 시스템
+
+#### 주요 함수
+
+##### 1. tile_image()
+
+```python
+def tile_image(
+    image: np.ndarray,
+    tile_size: int = 512,
+    overlap: int = 128
+) -> Tuple[List[Tuple[np.ndarray, Tuple[int, int, int, int]]], Tuple[int, ...]]
+```
+
+**기능**: 이미지를 오버랩된 타일로 분할
+- **입력**: 이미지 (C, H, W) 또는 (H, W), 타일 크기, 오버랩
+- **출력**: 타일 리스트 + 위치 정보, 원본 형태
+- **특징**: 경계 처리 (제로 패딩), 2D/3D 이미지 지원
+
+##### 2. create_hanning_window()
+
+```python
+def create_hanning_window(
+    size: int, 
+    overlap: int, 
+    device: str = 'cpu'
+) -> torch.Tensor
+```
+
+**기능**: 2D Hanning 윈도우 생성 (블렌딩용)
+- **특징**: 오버랩 영역에서 부드러운 가중치 전환
+- **반환**: (size, size) 형태의 윈도우
+
+##### 3. blend_tiles()
+
+```python
+def blend_tiles(
+    tiles: List[Tuple[np.ndarray, Tuple[int, int, int, int]]],
+    original_shape: Tuple[int, ...],
+    tile_size: int = 512,
+    overlap: int = 128,
+    device: str = 'cpu'
+) -> np.ndarray
+```
+
+**기능**: Hanning 윈도우 블렌딩으로 타일 재조립
+- **특징**: Seam artifact 제거, 가중 평균
+- **성능 목표**: 경계 L2 오차 < 1e-3
+
+##### 4. infer_with_tiling()
+
+```python
+def infer_with_tiling(
+    image: np.ndarray,
+    model: torch.nn.Module,
+    tile_size: int = 512,
+    overlap: int = 128,
+    device: str = 'cuda',
+    batch_size: int = 1,
+    verbose: bool = True
+) -> np.ndarray
+```
+
+**기능**: 전체 타일 기반 추론 파이프라인
+- **워크플로우**:
+  1. 이미지를 타일로 분할 (`tile_image`)
+  2. 각 타일에 대해 모델 추론 (배치 처리)
+  3. 결과를 블렌딩으로 재조립 (`blend_tiles`)
+- **메모리 효율성**: GPU 메모리 < 6GB (9344×7000 이미지 처리 가능)
+
+##### 5. estimate_memory_usage()
+
+```python
+def estimate_memory_usage(
+    image_shape: Tuple[int, int, int],
+    tile_size: int = 512,
+    overlap: int = 128,
+    model_params: int = 0,
+    batch_size: int = 1,
+    dtype: str = 'float32'
+) -> dict
+```
+
+**기능**: 타일 기반 추론의 예상 메모리 사용량 계산
+- **반환**: 입력/출력 타일, 모델, 블렌딩 버퍼 메모리 (MB 단위)
+
+#### 사용 예시
+
+```python
+from src.utils.tiling import infer_with_tiling
+
+# 대규모 이미지 추론
+large_img = np.random.rand(16, 9344, 7000)
+model = UNet(n_channels=16, n_classes=1).to('cuda')
+model.eval()
+
+result = infer_with_tiling(
+    large_img,
+    model,
+    tile_size=512,
+    overlap=128,
+    device='cuda',
+    batch_size=2,
+    verbose=True
+)
+```
+
+---
+
+## src/train.py 클래스 업데이트 (v2-P1)
+
+### Trainer 클래스 - AMP 통합
+
+#### 새로운 초기화 파라미터
+
+```python
+def __init__(
+    self, 
+    model, 
+    loss_fn, 
+    use_amp=True,           # ⭐ 신규
+    grad_accum_steps=1      # ⭐ 신규
+)
+```
+
+**새 기능**:
+- `use_amp`: Mixed Precision Training (AMP) 활성화
+- `grad_accum_steps`: 그래디언트 누적 스텝 수
+
+#### AMP 워크플로우
+
+```python
+# Adam 학습 루프 (수정됨)
+for epoch in range(epochs):
+    for accum_step in range(self.grad_accum_steps):
+        # AMP autocast
+        if self.use_amp:
+            with torch.cuda.amp.autocast():
+                loss, loss_dict = self.loss_fn(...)
+        
+        scaled_loss = loss / self.grad_accum_steps
+        
+        # Backward with scaling
+        if self.use_amp:
+            self.scaler.scale(scaled_loss).backward()
+        else:
+            scaled_loss.backward()
+    
+    # Optimizer step with unscaling
+    if self.use_amp:
+        self.scaler.step(optimizer)
+        self.scaler.update()
+    else:
+        optimizer.step()
+```
+
+**성능 개선**:
+- 메모리 사용량: 30-50% 절감
+- 훈련 속도: 1.5-2배 향상 (Tensor Core 활용)
+- 수치 안정성: GradScaler 자동 스케일링
+
+---
+
+## examples/run_psi_pipeline.py 플래그 (v2-P1)
+
+### 새로운 명령줄 옵션
+
+#### AMP 관련
+
+```bash
+--amp               # AMP 활성화 (기본값: True)
+--no-amp            # AMP 비활성화
+--grad-accum-steps N  # 그래디언트 누적 스텝 (기본값: 1)
+```
+
+#### 타일링 추론
+
+```bash
+--tiled-infer       # 타일 기반 추론 사용
+--tile-size N       # 타일 크기 (기본값: 512)
+--tile-overlap N    # 오버랩 픽셀 (기본값: 128)
+```
+
+### 사용 예시
+
+```bash
+# 대규모 이미지 처리 (타일링 + AMP)
+python examples/run_psi_pipeline.py inference \
+    --tiled-infer \
+    --tile-size 512 \
+    --tile-overlap 128 \
+    --amp
+
+# 메모리 절약 (AMP + 그래디언트 누적)
+python examples/run_psi_pipeline.py pretrain \
+    --amp \
+    --grad-accum-steps 4 \
+    --batch-size 2
+```
+
+---
+
+**문서 버전**: 1.1 (v2-P1 업데이트)  
+**최종 업데이트**: 2025-10-26  
 **작성자**: Scaled-cPIKAN 개발팀  
-**관련 문서**: [이론적 배경](../theory/theoretical_background.md)
+**관련 문서**: [이론적 배경](../theory/theoretical_background.md), [TODO v2](../v2/TODO_v2.md)
+

@@ -46,6 +46,7 @@ from src.models import UNet, Scaled_cPIKAN
 from src.loss import UNetPhysicsLoss, PinnReconstructionLoss
 from src.data_generator import generate_synthetic_data, DEFAULT_WAVELENGTHS
 from src.data import WaferPatchDataset
+from src.utils.tiling import infer_with_tiling
 
 
 class PSIPipeline:
@@ -318,47 +319,98 @@ class PSIPipeline:
         print(f"   학습 에포크: {checkpoint['epoch']}")
         print(f"   학습 손실: {checkpoint['loss']:.6e}")
         
-        # 테스트 데이터셋 준비
-        test_dataset = WaferPatchDataset(
-            data_dir=str(self.test_dir),
-            patch_size=self.config.patch_size,
-            num_channels=self.num_channels,
-            output_format='bmp'
-        )
+        # 타일링 기반 추론 여부 확인
+        use_tiling = self.config.tiled_infer
         
-        test_loader = DataLoader(
-            test_dataset,
-            batch_size=1,
-            shuffle=False,
-            num_workers=0
-        )
-        
-        print(f"\n🔍 추론 실행 중... ({len(test_dataset)}개 샘플)")
-        
-        # 추론 결과 저장
-        predictions = []
-        ground_truths = []
-        
-        with torch.no_grad():
-            for idx, (input_buckets, target_height) in enumerate(tqdm(test_loader, desc="추론")):
-                input_buckets = input_buckets.to(self.device)
+        if use_tiling:
+            print(f"\n🔍 타일 기반 추론 모드")
+            print(f"   타일 크기: {self.config.tile_size}")
+            print(f"   오버랩: {self.config.tile_overlap}")
+            
+            # 타일링 추론 (전체 이미지 단위)
+            predictions = []
+            ground_truths = []
+            
+            # 테스트 샘플 로드
+            for idx in tqdm(range(self.config.num_test_samples), desc="타일 기반 추론"):
+                sample_dir = self.test_dir / f"sample_{idx:04d}"
                 
-                # 예측
-                predicted_height = model(input_buckets)
-                
-                # CPU로 이동 및 저장
-                pred = predicted_height.cpu().numpy().squeeze()
-                gt = target_height.numpy().squeeze()
-                
-                predictions.append(pred)
+                # Ground truth 로드
+                gt = np.load(sample_dir / "ground_truth.npy")
                 ground_truths.append(gt)
                 
-                # 처음 몇 개만 시각화 저장
+                # Bucket 이미지 로드
+                buckets = []
+                for channel_idx in range(self.num_channels):
+                    img = Image.open(sample_dir / f"bucket_{channel_idx:02d}.bmp")
+                    buckets.append(np.array(img, dtype=np.float32))
+                
+                input_img = np.stack(buckets, axis=0) / 255.0  # 정규화
+                
+                # 타일링 추론
+                pred = infer_with_tiling(
+                    input_img,
+                    model,
+                    tile_size=self.config.tile_size,
+                    overlap=self.config.tile_overlap,
+                    device=str(self.device),
+                    batch_size=1,
+                    verbose=(idx == 0)  # 첫 샘플만 로그 출력
+                )
+                
+                predictions.append(pred.squeeze())
+                
+                # 시각화 저장
                 if idx < self.config.num_visualize:
                     self._save_inference_visualization(
-                        pred, gt, idx, 
-                        input_buckets.cpu().numpy().squeeze()
+                        pred.squeeze(), gt, idx, input_img
                     )
+        
+        else:
+            # 기존 패치 기반 추론
+            print(f"\n🔍 패치 기반 추론 모드")
+            
+            # 테스트 데이터셋 준비
+            test_dataset = WaferPatchDataset(
+                data_dir=str(self.test_dir),
+                patch_size=self.config.patch_size,
+                num_channels=self.num_channels,
+                output_format='bmp'
+            )
+            
+            test_loader = DataLoader(
+                test_dataset,
+                batch_size=1,
+                shuffle=False,
+                num_workers=0
+            )
+            
+            print(f"   추론 실행 중... ({len(test_dataset)}개 샘플)")
+            
+            # 추론 결과 저장
+            predictions = []
+            ground_truths = []
+            
+            with torch.no_grad():
+                for idx, (input_buckets, target_height) in enumerate(tqdm(test_loader, desc="추론")):
+                    input_buckets = input_buckets.to(self.device)
+                    
+                    # 예측
+                    predicted_height = model(input_buckets)
+                    
+                    # CPU로 이동 및 저장
+                    pred = predicted_height.cpu().numpy().squeeze()
+                    gt = target_height.numpy().squeeze()
+                    
+                    predictions.append(pred)
+                    ground_truths.append(gt)
+                    
+                    # 처음 몇 개만 시각화 저장
+                    if idx < self.config.num_visualize:
+                        self._save_inference_visualization(
+                            pred, gt, idx, 
+                            input_buckets.cpu().numpy().squeeze()
+                        )
         
         # 결과 저장
         results = {
@@ -640,6 +692,46 @@ def parse_args():
         type=float,
         default=1e-4,
         help='평활도 손실 가중치 (기본값: 1e-4)'
+    )
+    
+    # v2-P1: AMP 및 고급 훈련 옵션
+    parser.add_argument(
+        '--amp',
+        action='store_true',
+        default=True,
+        help='Automatic Mixed Precision (AMP) 사용 (기본값: True)'
+    )
+    parser.add_argument(
+        '--no-amp',
+        action='store_false',
+        dest='amp',
+        help='AMP 비활성화'
+    )
+    parser.add_argument(
+        '--grad-accum-steps',
+        type=int,
+        default=1,
+        help='그래디언트 누적 스텝 수 (기본값: 1)'
+    )
+    
+    # v2-P1: 타일링 기반 추론 옵션
+    parser.add_argument(
+        '--tiled-infer',
+        action='store_true',
+        default=False,
+        help='타일 기반 추론 사용 (대규모 이미지용)'
+    )
+    parser.add_argument(
+        '--tile-size',
+        type=int,
+        default=512,
+        help='타일 크기 (기본값: 512)'
+    )
+    parser.add_argument(
+        '--tile-overlap',
+        type=int,
+        default=128,
+        help='타일 오버랩 픽셀 수 (기본값: 128)'
     )
     
     # 추론/평가 옵션
