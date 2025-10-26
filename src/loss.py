@@ -296,6 +296,9 @@ class DynamicWeightedLoss(nn.Module):
         if initial_weights is None:
             initial_weights = {name: 1.0 for name in loss_names}
         
+        # device 파라미터 저장 (나중에 텐서를 올바른 device에 생성)
+        self.device_param = nn.Parameter(torch.zeros(1))  # 더미 파라미터로 device 추적
+        
         # 각 손실 항에 대한 학습 가능한 가중치 (로그 공간에서 표현)
         # 로그 공간 사용 이유: 가중치가 항상 양수로 유지됨
         self.log_weights = nn.ParameterDict({
@@ -344,7 +347,7 @@ class DynamicWeightedLoss(nn.Module):
         current_losses = torch.stack([loss_dict[name] for name in self.loss_names])
         
         # 동적 가중치 계산 (로그 공간에서 실제 공간으로)
-        weights = torch.stack([torch.exp(self.log_weights[name]) for name in self.loss_names])
+        weights = torch.stack([torch.exp(self.log_weights[name]) for name in self.loss_names]).to(device)
         
         # 가중치가 적용된 총 손실 계산
         weighted_total_loss = (weights.detach() * current_losses).sum()  # weights detach하여 모델 훈련과 분리
@@ -387,7 +390,9 @@ class DynamicWeightedLoss(nn.Module):
         
         # 각 손실의 상대적 역 훈련 속도 계산
         # r_i(t) = L_i(t) / L_i(0)
-        loss_ratios = current_losses / (self.initial_losses + 1e-8)
+        # initial_losses와 current_losses를 같은 device로
+        initial_losses_on_device = self.initial_losses.to(device)
+        loss_ratios = current_losses / (initial_losses_on_device + 1e-8)
         
         # 평균 역 훈련 속도
         mean_loss_ratio = loss_ratios.mean()
@@ -404,10 +409,15 @@ class DynamicWeightedLoss(nn.Module):
             for i, name in enumerate(self.loss_names):
                 # 간단한 비례 업데이트
                 adjustment = self.learning_rate * (target_ratios[i] - 1.0)
-                self.log_weights[name].data += adjustment
+                # adjustment를 CPU로 이동하여 log_weights와 같은 device에 맞춤
+                self.log_weights[name].data += adjustment.cpu()
             
             # 가중치 정규화 (합이 일정하게 유지)
             total_weight = sum(torch.exp(self.log_weights[name]) for name in self.loss_names)
             normalization_factor = len(self.loss_names) / (total_weight + 1e-8)
             for name in self.loss_names:
-                self.log_weights[name].data += torch.log(normalization_factor + 1e-10)
+                # normalization_factor도 CPU로
+                norm_adj = torch.log(normalization_factor + 1e-10)
+                if norm_adj.device != self.log_weights[name].device:
+                    norm_adj = norm_adj.cpu()
+                self.log_weights[name].data += norm_adj
